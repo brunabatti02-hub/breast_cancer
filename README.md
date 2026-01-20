@@ -8,7 +8,7 @@
 ### 🧬 Polygenic Score (PGS) Catalog – EBI
 🔗 https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/
 
-Este dataset é mantido pelo **European Bioinformatics Institute (EBI)** e contém **Polygenic Risk Scores (PRS/PGS)** para diversas doenças e características complexas.  
+Este dataset é mantido pelo **European Bioinformatics Institute (EBI)** e contém **Polygenic Risk Scores (PRS/PGS)** para diversas doenças e características complexas. Porém nesse estudo, selecionamos somente o breast cancer. 
 Os scores são calculados a partir de variantes genéticas (SNPs) e são amplamente utilizados em estudos de:
 - Genômica
 - Epidemiologia genética
@@ -368,4 +368,5 @@ Este projeto:
 
 > Multimodalidade por representação é a solução correta quando cohorts
 > são disjuntos.
+
 
