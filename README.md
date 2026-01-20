@@ -48,6 +48,8 @@ por **alinhamento geométrico entre espaços latentes**.
 Objetivo científico: \> Investigar se diferentes modalidades capturam
 padrões estruturais convergentes \> de risco para câncer de mama.
 
+Outra possível abordagem encontrada na literatura:https://www.nature.com/articles/s42256-025-01052-4#Sec12
+
 ------------------------------------------------------------------------
 
 ## 2. Experimento 1 --- Mamografia
@@ -368,5 +370,6 @@ Este projeto:
 
 > Multimodalidade por representação é a solução correta quando cohorts
 > são disjuntos.
+
 
 
