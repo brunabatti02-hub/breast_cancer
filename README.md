@@ -3,6 +3,34 @@
 ## Mamografia (Imagem) + Genética (PGS/PRS)
 
 ------------------------------------------------------------------------
+## 📊 Datasets Utilizados
+
+### 🧬 Polygenic Score (PGS) Catalog – EBI
+🔗 https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/
+
+Este dataset é mantido pelo **European Bioinformatics Institute (EBI)** e contém **Polygenic Risk Scores (PRS/PGS)** para diversas doenças e características complexas.  
+Os scores são calculados a partir de variantes genéticas (SNPs) e são amplamente utilizados em estudos de:
+- Genômica
+- Epidemiologia genética
+- Predição de risco de doenças complexas, incluindo câncer
+
+Os dados incluem pesos genéticos, identificadores de variantes e metadados associados a cada score.
+
+---
+
+### 🩻 CBIS-DDSM – Cancer Imaging Archive
+🔗 https://www.cancerimagingarchive.net/wp-content/uploads/CBIS-DDSM-All-doiJNLP-zzWs5zfZ.tcia
+
+O **CBIS-DDSM (Curated Breast Imaging Subset of DDSM)** é um dataset público de imagens médicas focado em **mamografias para detecção de câncer de mama**.  
+Ele é uma versão curada do dataset DDSM original e inclui:
+- Imagens de mamografia em alta resolução
+- Anotações de lesões (benignas e malignas)
+- Segmentações e metadados clínicos
+
+Este dataset é amplamente utilizado em pesquisas de:
+- Visão computacional
+- Deep Learning
+- Diagnóstico assistido por computador (CAD) em câncer de mama
 
 ## 1. Motivação Científica
 
@@ -340,3 +368,4 @@ Este projeto:
 
 > Multimodalidade por representação é a solução correta quando cohorts
 > são disjuntos.
+
