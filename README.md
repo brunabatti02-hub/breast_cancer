@@ -1,3 +1,211 @@
+﻿ Documentacao Tecnica Completa do Projeto
+
+
+1. Histopatologia (BreaKHis): imagens de lamina histologica, com texturas complexas e padroes microscópicos.
+2. Mamografia (INBreast): imagens radiologicas em DICOM, com contraste baixo, ruido e alto grau de variabilidade.
+
+Esses dominios sao bastante diferentes. A histologia apresenta padroes locais ricos (celulas, estruturas glandulares), enquanto a mamografia apresenta padroes globais e sutis (masas, assimetrias, calcificacoes). A transferencia entre esses dominios exige cuidado para evitar sobreajuste e catastrofica degradacao das representacoes aprendidas.
+
+
+2. Datasets
+
+2.1 BreaKHis (Histologia)
+Dominio: microscopia de tecido mamario.
+Classes:
+  - Binario: benigno vs maligno.
+  - Multiclasse: 8 subtipos histologicos.
+Desafio principal: desbalanceamento entre classes e alta variabilidade intra-classe.
+
+2.2 INBreast (Mamografia)
+Dominio: mamografia (DICOM).
+Labels principais:
+  - BI-RADS: 1–6, escala clinica de suspeita.
+  - ACR: densidade mamaria (usado em trabalhos especificos).
+Aqui foi adotado:
+  - Binario: BI-RADS >= 4 como maligno.
+  - Multiclasse: BI-RADS 1–6 (mapeado para 0–5).
+
+Desafio principal: dataset pequeno, dominio distinto e imagens DICOM que precisam de normalizacao.
+
+
+3. Preprocessamento
+
+3.1 Histologia (BreaKHis)
+Imagens ja em RGB.
+Normalizacao simples (mean/ std).\n- Augmentations para robustez: flips, rotacoes, affine.
+
+3.2 Mamografia (INBreast DICOM)
+Conversao DICOM:
+  - Leitura do pixel array.
+  - Rescale slope/intercept (se existir).
+  - Inversao se MONOCHROME1.
+  - Normalizacao para 0–255.
+  - Conversao para 3 canais (RGB fake) para compatibilidade com CNN.
+
+
+4. Balanceamento de Classes
+
+O desbalanceamento e comum em datasets medicos. Foram aplicadas duas estrategias principais:
+
+1. WeightedRandomSampler (PyTorch)
+   - Superamostra classes minoritarias.
+   - Ajuda a expor o modelo a exemplos raros durante o treino.
+
+2. CrossEntropyLoss com pesos
+   - Penaliza mais erros em classes minoritarias.
+   - Complementa o sampler e estabiliza o gradiente.
+
+Essas estrategias foram aplicadas nos seguintes modelos:
+SEConformer (histologia e INBreast)
+SEConformer Transfer Learning
+HFTNet
+HistoDX
+
+
+5. Augmentation
+
+Augmentations aumentam a diversidade do dataset e reduzem overfitting. As principais transformacoes aplicadas:
+
+Flip horizontal e vertical: simula variacoes de orientacao.
+Rotacoes pequenas (10–15 graus): invariancia a pequenos angulos.
+Affine (shear + translate): simula deformacoes anatomicas e variacoes no posicionamento.
+
+Em histologia, essas transformacoes sao altamente efetivas porque a orientacao da lamina e arbitraria. Em mamografia, sao usadas com cautela, mas ainda ajudam a melhorar a robustez do classificador.
+
+
+6. Modelos e Arquiteturas
+
+6.1 SEConformer
+
+Objetivo: classificar imagens binario/multiclasse em histologia e mamografia.
+
+Arquitetura:
+Blocos convolucionais com Squeeze-and-Excitation (SE).
+Conformer integra:
+  - CNN: padroes locais (textura, borda).
+  - Multihead Attention: padroes globais e dependencias longas.
+
+Racional tecnico:
+SE melhora discriminacao ao realcar canais importantes.
+Conformer reduz dependencia exclusiva de convolucao e permite atencao global.
+
+Treinamento:
+Loss: CrossEntropy com pesos.
+Sampler: WeightedRandomSampler.
+Augmentation ativa.
+
+
+6.2 SEConformer Transfer Learning (Histologia -> Mamografia)
+
+Objetivo: aproveitar representacoes aprendidas em histologia para mamografia.
+
+Pipeline:
+1. Treina SEConformer em histologia.
+2. Carrega pesos no modelo para mamografia.
+3. Congela backbone (SE + Conformer).
+4. Ajusta somente o classificador final.
+
+Justificativa:
+O backbone captura padroes genericos (texturas, contraste, bordas) que podem ser transferidos.
+Congelar reduz risco de overfitting e catastrofica forgetting.
+Somente a camada final se adapta a distribuicao do dataset alvo.
+
+Configuracao atual:
+Multiclasse BI-RADS 1–6.
+Balanceamento e augmentation ativos.
+
+
+6.3 HFTNet
+
+Objetivo: classificar 8 subtipos de histologia (multiclasse).
+
+Arquitetura:
+Ensemble/ fusao de backbones heterogeneos:
+  - DenseNet, Xception (CNNs)
+  - ViT, DeiT, Swin (Transformers)
+
+Racional tecnico:
+CNNs capturam textura local.
+Transformers capturam relacoes globais.
+Fusao permite maior poder representacional.
+
+Treinamento:
+Augmentation forte.
+Loss com pesos para balanceamento.
+
+
+6.4 HistoDX 
+
+Objetivo: classificar benigno vs maligno em histologia.
+
+Arquitetura:
+EfficientNetV2-S como backbone.
+Classificador final custom.
+
+Treinamento:
+Augmentation basica.
+Balanceamento via sampler + class weights.
+
+
+
+7. Transferencia de Aprendizado (Resumo Tecnico)
+
+Transfer learning foi aplicado no SEConformer, com estrategia conservadora:
+Congelamento do backbone.
+Ajuste apenas do classificador.
+
+Beneficios:
+Menor risco de overfitting.
+Estabilidade em datasets pequenos (INBreast).
+Preserva representacoes robustas aprendidas no dominio fonte.
+
+Riscos:
+Se dominios forem muito distintos, pode limitar a adaptacao.
+Solucao: fine-tuning em duas fases (congelado -> descongelado).
+
+
+8. Desenvolvimento Tecnico (Como o Codigo Foi Construido)
+
+Esta secao descreve o desenho do codigo e as decisoes de implementacao.
+
+8.1 Organizacao em pacotes
+Cada modelo foi estruturado em uma pasta com modulos `.py` separados:
+`data.py` -> leitura e preparo dos dados.
+`model.py` -> definicao da arquitetura.
+`train.py` -> loop de treino e validacao.
+`eval.py` (quando aplicavel) -> metricas e graficos.
+`io_utils.py` -> salvamento de logs, metricas e imagens.
+
+Essa separacao facilita manutencao e permite reaproveitar codigo entre modelos.
+
+8.2 Padrao de Treinamento
+Todos os treinamentos seguem o mesmo fluxo:
+1. Carregar dataset e gerar splits.
+2. Criar DataLoaders com sampler balanceado.
+3. Instanciar modelo.
+4. Treinar por epoca (loss + atualizacao de pesos).
+5. Validar e registrar metricas.
+6. Salvar checkpoints e graficos.
+
+8.3 Design de augmentations
+As transformações foram escolhidas para aumentar robustez sem distorcer semântica clínica.
+Em mamografia, augmentations foram mantidas moderadas (rotação pequena).
+
+8.4 Balanceamento e impacto no treinamento
+O sampler garante que todas as classes aparecem com frequência similar.
+A loss ponderada evita que o modelo aprenda a sempre prever a classe majoritária.
+
+8.5 Transfer Learning
+A implementação carrega pesos com `strict=False` para compatibilidade.
+Camadas congeladas com `requires grad=False`.
+Apenas o classificador final e atualizado.
+
+
+
+
+
+
+
 # Multimodal Representation Learning for Breast Cancer Risk
 
 ## Mamografia (Imagem) + Genética (PGS/PRS)
