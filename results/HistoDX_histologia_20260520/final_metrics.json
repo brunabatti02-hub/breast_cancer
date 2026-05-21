@@ -1,0 +1,15 @@
+{
+  "model": "HistoDX",
+  "scenario": "Histologia",
+  "epochs": 100,
+  "accuracy": 0.9394,
+  "precision": 0.9728,
+  "recall": 0.9295,
+  "f1_score": 0.9507,
+  "auc": 0.9712,
+  "accuracy_pct": 93.94,
+  "precision_pct": 97.28,
+  "recall_pct": 92.95,
+  "f1_score_pct": 95.07,
+  "auc_pct": 97.12
+}

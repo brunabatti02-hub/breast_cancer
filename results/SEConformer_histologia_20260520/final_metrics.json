@@ -1,0 +1,17 @@
+{
+  "model": "SEConformer",
+  "scenario": "Histologia",
+  "epochs": 100,
+  "accuracy": 0.9279,
+  "precision": 0.9857,
+  "recall": 0.9058,
+  "f1_score": 0.9441,
+  "auc": 0.9869,
+  "accuracy_pct": 92.79,
+  "precision_pct": 98.57,
+  "recall_pct": 90.58,
+  "f1_score_pct": 94.41,
+  "auc_pct": 98.69,
+  "specificity": 0.973,
+  "specificity_pct": 97.3
+}

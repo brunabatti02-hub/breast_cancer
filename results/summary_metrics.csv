@@ -1,0 +1,5 @@
+Modelo,Cenario,Acc,Prec,Recall,F1,AUC,RunDir
+SEConformer,Histologia,92.79,98.57,90.58,94.41,98.69,results\FAPESP\SEConformer_histologia_20260520
+SEConformer,Transferencia,62.32,61.8,60.45,61.12,74.83,results\FAPESP\SEConformer_transferencia_20260520
+HFTNet,Histologia,91.62,96.35,90.85,93.52,96.48,results\FAPESP\HFTNet_histologia_20260520
+HistoDX,Histologia,93.94,97.28,92.95,95.07,97.12,results\FAPESP\HistoDX_histologia_20260520

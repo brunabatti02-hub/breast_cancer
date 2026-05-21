@@ -1,0 +1,15 @@
+{
+  "model": "SEConformer",
+  "scenario": "Transferencia",
+  "epochs": 100,
+  "accuracy": 0.6232,
+  "precision": 0.618,
+  "recall": 0.6045,
+  "f1_score": 0.6112,
+  "auc": 0.7483,
+  "accuracy_pct": 62.32,
+  "precision_pct": 61.8,
+  "recall_pct": 60.45,
+  "f1_score_pct": 61.12,
+  "auc_pct": 74.83
+}
