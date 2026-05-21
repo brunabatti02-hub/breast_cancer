@@ -1,24 +1,49 @@
 import os
 import random
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
 from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, classification_report, roc_curve, auc, roc_auc_score,
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
     precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
 )
 from sklearn.preprocessing import label_binarize
-import matplotlib.pyplot as plt
-import seaborn as sns
+from torch.utils.data import DataLoader, WeightedRandomSampler
+from tqdm import tqdm
 
-from .config import NUM_CLASSES, IMG_SIZE, BATCH_SIZE, EPOCHS, LR, NUM_WORKERS, SEED
-from .data import HistologyDataset
+from .config import BATCH_SIZE, EPOCHS, IMG_SIZE, LR, NUM_WORKERS, SEED
+from .data import (
+    ImageClassificationDataset,
+    build_inbreast_csv,
+    load_dicom_pil,
+    load_rgb_pil,
+    parse_breakhis_dataset,
+    split_dataframe_holdout,
+)
+from .io_utils import find_best_previous_run, make_run_dirs, save_fig, save_metrics
 from .model import HFTNet
-from .io_utils import save_fig, save_metrics
+
+
+BREAKHIS_CLASS_NAMES = [
+    "Adenosis",
+    "Fibroadenoma",
+    "Phyllodes",
+    "Tubular Adenoma",
+    "Ductal Carcinoma",
+    "Lobular Carcinoma",
+    "Mucinous Carcinoma",
+    "Papillary Carcinoma",
+]
 
 
 def seed_everything(seed=SEED):
@@ -29,27 +54,69 @@ def seed_everything(seed=SEED):
         torch.cuda.manual_seed_all(seed)
 
 
-def compute_multiclass_metrics(y_true, y_pred, y_prob, num_classes):
-    acc = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, average="macro", zero_division=0)
-    recall = recall_score(y_true, y_pred, average="macro", zero_division=0)
-    f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
-    cm = confusion_matrix(y_true, y_pred)
+def _build_train_loader(dataset, labels, batch_size, device, balance=True):
+    if not balance:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=NUM_WORKERS), None
 
-    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
-    try:
-        auc_macro = roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr")
-    except Exception:
-        auc_macro = np.nan
+    labels = np.asarray(labels, dtype=np.int64)
+    class_counts = np.bincount(labels)
+    class_weights = 1.0 / np.maximum(class_counts, 1)
+    sample_weights = class_weights[labels]
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+    loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=NUM_WORKERS)
+    weight_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
+    return loader, weight_tensor
 
-    return {
-        "accuracy": acc,
-        "precision_macro": precision,
-        "recall_macro": recall,
-        "f1_macro": f1,
-        "auc_macro_ovr": auc_macro,
-        "confusion_matrix": cm,
+
+def _filter_compatible_state_dict(model, state_dict):
+    model_state = model.state_dict()
+    compatible = {}
+    for key, value in state_dict.items():
+        if key in model_state and model_state[key].shape == value.shape:
+            compatible[key] = value
+    return compatible
+
+
+def _resolve_transfer_weights(weights_path, checkpoint_name):
+    if weights_path:
+        return weights_path
+
+    best_run = find_best_previous_run(checkpoint_name=checkpoint_name)
+    print(
+        "Usando melhor baseline anterior para transfer learning:",
+        best_run["model_path"],
+        f"({best_run['metric_name']}={best_run['metric_value']:.4f})",
+    )
+    return best_run["model_path"]
+
+
+def compute_metrics(y_true, y_pred, y_prob, num_classes):
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
     }
+
+    if num_classes == 2:
+        positive_prob = y_prob[:, 1]
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        metrics.update({
+            "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+            "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+            "specificity": float(specificity),
+            "f1_score": float(f1_score(y_true, y_pred, zero_division=0)),
+            "auc": float(roc_auc_score(y_true, positive_prob)),
+        })
+    else:
+        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+        metrics.update({
+            "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
+            "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
+            "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+            "auc_macro_ovr": float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr")),
+        })
+
+    return metrics
 
 
 def plot_training_curves(history, plots_dir=None, show=True):
@@ -95,73 +162,61 @@ def plot_confusion_matrix(cm, class_names=None, title="Confusion Matrix", plots_
     plt.close(fig)
 
 
-def plot_roc_multiclass(y_true, y_prob, num_classes, plots_dir=None, show=True):
-    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
-
+def plot_roc_curves(y_true, y_prob, num_classes, plots_dir=None, show=True):
     fig = plt.figure(figsize=(8, 6))
-    for i in range(num_classes):
-        fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
-        roc_auc = auc(fpr, tpr)
-        plt.plot(fpr, tpr, label=f"Classe {i} (AUC={roc_auc:.2f})")
+
+    if num_classes == 2:
+        fpr, tpr, _ = roc_curve(y_true, y_prob[:, 1])
+        roc_auc = roc_auc_score(y_true, y_prob[:, 1])
+        plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.4f}")
+    else:
+        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+        for i in range(num_classes):
+            fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
+            roc_auc = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
+            plt.plot(fpr, tpr, label=f"Classe {i} (AUC={roc_auc:.2f})")
 
     plt.plot([0, 1], [0, 1], "k--")
-    plt.title("ROC One-vs-Rest")
+    plt.title("ROC")
     plt.xlabel("FPR")
     plt.ylabel("TPR")
     plt.legend()
     if plots_dir:
-        save_fig(fig, plots_dir, "roc_ovr")
+        save_fig(fig, plots_dir, "roc")
     if show:
         plt.show()
     plt.close(fig)
 
 
-def plot_pr_multiclass(y_true, y_prob, num_classes, plots_dir=None, show=True):
-    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
-
+def plot_pr_curves(y_true, y_prob, num_classes, plots_dir=None, show=True):
     fig = plt.figure(figsize=(8, 6))
-    for i in range(num_classes):
-        precision, recall, _ = precision_recall_curve(y_true_bin[:, i], y_prob[:, i])
-        plt.plot(recall, precision, label=f"Classe {i}")
+
+    if num_classes == 2:
+        precision, recall, _ = precision_recall_curve(y_true, y_prob[:, 1])
+        plt.plot(recall, precision, label="Classe positiva")
+    else:
+        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+        for i in range(num_classes):
+            precision, recall, _ = precision_recall_curve(y_true_bin[:, i], y_prob[:, i])
+            plt.plot(recall, precision, label=f"Classe {i}")
 
     plt.title("Precision-Recall Curve")
     plt.xlabel("Recall")
     plt.ylabel("Precision")
     plt.legend()
     if plots_dir:
-        save_fig(fig, plots_dir, "pr_curve")
+        save_fig(fig, plots_dir, "precision_recall")
     if show:
         plt.show()
     plt.close(fig)
 
 
-def plot_probability_histograms(y_true, y_prob, plots_dir=None, show=True):
-    max_prob = np.max(y_prob, axis=1)
-
-    fig = plt.figure(figsize=(8, 5))
-    plt.hist(max_prob, bins=30, alpha=0.8)
-    plt.title("Distribuicao da confianca do modelo")
-    plt.xlabel("Maior probabilidade predita")
-    plt.ylabel("Frequencia")
-    if plots_dir:
-        save_fig(fig, plots_dir, "confidence_distribution")
-    if show:
-        plt.show()
-    plt.close(fig)
-
-    fig = plt.figure(figsize=(8, 5))
-    correct = (np.argmax(y_prob, axis=1) == np.array(y_true))
-    plt.hist(max_prob[correct], bins=30, alpha=0.6, label="Corretas")
-    plt.hist(max_prob[~correct], bins=30, alpha=0.6, label="Erradas")
-    plt.title("Confianca: corretas vs erradas")
-    plt.xlabel("Maior probabilidade predita")
-    plt.ylabel("Frequencia")
-    plt.legend()
-    if plots_dir:
-        save_fig(fig, plots_dir, "confidence_correct_vs_wrong")
-    if show:
-        plt.show()
-    plt.close(fig)
+def _default_class_names(num_classes):
+    if num_classes == 8:
+        return BREAKHIS_CLASS_NAMES
+    if num_classes == 2:
+        return ["Benign", "Malignant"]
+    return [f"Class {idx}" for idx in range(num_classes)]
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device):
@@ -170,7 +225,8 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     preds_all, labels_all = [], []
 
     for images, labels in tqdm(loader, leave=False):
-        images, labels = images.to(device), labels.to(device)
+        images = images.to(device)
+        labels = labels.to(device)
 
         optimizer.zero_grad()
         outputs = model(images)
@@ -179,9 +235,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         optimizer.step()
 
         running_loss += loss.item()
-
-        preds = outputs.argmax(dim=1)
-        preds_all.extend(preds.detach().cpu().numpy())
+        preds_all.extend(outputs.argmax(dim=1).detach().cpu().numpy())
         labels_all.extend(labels.detach().cpu().numpy())
 
     epoch_loss = running_loss / len(loader)
@@ -196,71 +250,94 @@ def validate_one_epoch(model, loader, criterion, num_classes, device):
 
     with torch.no_grad():
         for images, labels in tqdm(loader, leave=False):
-            images, labels = images.to(device), labels.to(device)
+            images = images.to(device)
+            labels = labels.to(device)
 
             outputs = model(images)
             loss = criterion(outputs, labels)
-
             probs = torch.softmax(outputs, dim=1)
-            preds = outputs.argmax(dim=1)
 
             running_loss += loss.item()
-
-            preds_all.extend(preds.cpu().numpy())
+            preds_all.extend(outputs.argmax(dim=1).cpu().numpy())
             labels_all.extend(labels.cpu().numpy())
             probs_all.extend(probs.cpu().numpy())
 
     epoch_loss = running_loss / len(loader)
     epoch_acc = accuracy_score(labels_all, preds_all)
-    metrics = compute_multiclass_metrics(
-        np.array(labels_all),
-        np.array(preds_all),
-        np.array(probs_all),
-        num_classes,
-    )
 
-    return epoch_loss, epoch_acc, metrics, np.array(labels_all), np.array(preds_all), np.array(probs_all)
+    y_true = np.array(labels_all)
+    y_pred = np.array(preds_all)
+    y_prob = np.array(probs_all)
+    metrics = compute_metrics(y_true, y_pred, y_prob, num_classes)
+    metrics["confusion_matrix"] = confusion_matrix(y_true, y_pred)
+    return epoch_loss, epoch_acc, metrics, y_true, y_pred, y_prob
 
 
-def run_training(csv_path, fold=0, epochs=EPOCHS, run_dirs=None, device=None):
+def train_from_dataframes(
+    train_df,
+    val_df,
+    image_loader,
+    num_classes,
+    domain,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+    weights_path=None,
+    freeze_backbones=False,
+    freeze_except_classifier=False,
+    model_filename="hftnet_model.pth",
+    class_names=None,
+):
     seed_everything()
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if run_dirs is None:
-        from .io_utils import make_run_dirs
         run_dirs = make_run_dirs()
 
-    train_ds = HistologyDataset(csv_path, fold=fold, train=True, img_size=IMG_SIZE)
-    val_ds = HistologyDataset(csv_path, fold=fold, train=False, img_size=IMG_SIZE)
+    train_ds = ImageClassificationDataset(train_df, image_loader=image_loader, train=True, img_size=img_size, domain=domain)
+    val_ds = ImageClassificationDataset(val_df, image_loader=image_loader, train=False, img_size=img_size, domain=domain)
 
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
-    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+    train_loader, loss_weights = _build_train_loader(
+        train_ds,
+        train_df["label"].values,
+        batch_size=batch_size,
+        device=device,
+        balance=balance,
+    )
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS)
 
-    model = HFTNet(num_classes=NUM_CLASSES, pretrained=True, freeze_backbones=False).to(device)
+    model = HFTNet(num_classes=num_classes, pretrained=True, freeze_backbones=freeze_backbones).to(device)
+    if weights_path:
+        state = torch.load(weights_path, map_location=device)
+        compatible = _filter_compatible_state_dict(model, state)
+        model.load_state_dict(compatible, strict=False)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
+    if freeze_except_classifier:
+        for name, param in model.named_parameters():
+            if not name.startswith("classifier"):
+                param.requires_grad = False
+
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
-    # class balancing
-    counts = train_ds.df["label"].value_counts().sort_index()
-    class_weights = (1.0 / counts).values
-    class_weights = class_weights / class_weights.sum() * len(class_weights)
-    weight_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
-    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    criterion = nn.CrossEntropyLoss(weight=loss_weights)
 
     history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
-
-    best_acc = 0.0
+    best_score = -1.0
     best_state = None
     best_outputs = None
 
     for epoch in range(epochs):
-        print(f"\n===== EPOCA {epoch+1}/{epochs} =====")
+        print(f"\n===== EPOCA {epoch + 1}/{epochs} =====")
 
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_acc, metrics, y_true, y_pred, y_prob = validate_one_epoch(
-            model, val_loader, criterion, NUM_CLASSES, device
+            model, val_loader, criterion, num_classes, device
         )
 
         scheduler.step()
@@ -272,49 +349,227 @@ def run_training(csv_path, fold=0, epochs=EPOCHS, run_dirs=None, device=None):
 
         print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
         print(f"Val   Loss: {val_loss:.4f} | Val   Acc: {val_acc:.4f}")
-        print(f"Precision Macro: {metrics['precision_macro']:.4f}")
-        print(f"Recall Macro:    {metrics['recall_macro']:.4f}")
-        print(f"F1 Macro:        {metrics['f1_macro']:.4f}")
-        print(f"AUC Macro OVR:   {metrics['auc_macro_ovr']:.4f}")
+        for key, value in metrics.items():
+            if key != "confusion_matrix":
+                print(f"{key}: {value:.4f}")
 
-        if val_acc > best_acc:
-            best_acc = val_acc
+        if val_acc > best_score:
+            best_score = val_acc
             best_state = model.state_dict()
             best_outputs = (y_true, y_pred, y_prob, metrics)
 
     model.load_state_dict(best_state)
-
     y_true, y_pred, y_prob, metrics = best_outputs
-    save_metrics({
-        "accuracy": float(metrics["accuracy"]),
-        "precision_macro": float(metrics["precision_macro"]),
-        "recall_macro": float(metrics["recall_macro"]),
-        "f1_macro": float(metrics["f1_macro"]),
-        "auc_macro_ovr": float(metrics["auc_macro_ovr"]),
-    }, run_dirs["out_dir"], "final_metrics")
 
-    class_names = [
-        "Adenosis",
-        "Fibroadenoma",
-        "Phyllodes",
-        "Tubular Adenoma",
-        "Ductal Carcinoma",
-        "Lobular Carcinoma",
-        "Mucinous Carcinoma",
-        "Papillary Carcinoma",
-    ]
-    report = classification_report(y_true, y_pred, target_names=class_names, zero_division=0, output_dict=True)
-    import pandas as pd
-    pd.DataFrame(report).transpose().to_csv(os.path.join(run_dirs["out_dir"], "classification_report.csv"), index=True)
+    final_metrics = {key: float(value) for key, value in metrics.items() if key != "confusion_matrix"}
+    save_metrics(final_metrics, run_dirs["out_dir"], "final_metrics")
+    pd.DataFrame(metrics["confusion_matrix"]).to_csv(
+        os.path.join(run_dirs["out_dir"], "final_confusion_matrix.csv"),
+        index=False,
+    )
+    prob_cols = [f"prob_class_{idx}" for idx in range(y_prob.shape[1])]
+    predictions_df = pd.DataFrame(y_prob, columns=prob_cols)
+    predictions_df.insert(0, "y_pred", y_pred)
+    predictions_df.insert(0, "y_true", y_true)
+    predictions_df.to_csv(os.path.join(run_dirs["out_dir"], "final_predictions.csv"), index=False)
+
+    report = pd.DataFrame(
+        classification_report_safe(y_true, y_pred, class_names or _default_class_names(num_classes))
+    )
+    report.transpose().to_csv(os.path.join(run_dirs["out_dir"], "classification_report.csv"), index=True)
 
     plot_training_curves(history, plots_dir=run_dirs["plots_dir"], show=True)
-    plot_confusion_matrix(metrics["confusion_matrix"], class_names=class_names, title="HFT-Net - Confusion Matrix", plots_dir=run_dirs["plots_dir"], show=True)
-    plot_roc_multiclass(y_true, y_prob, NUM_CLASSES, plots_dir=run_dirs["plots_dir"], show=True)
-    plot_pr_multiclass(y_true, y_prob, NUM_CLASSES, plots_dir=run_dirs["plots_dir"], show=True)
-    plot_probability_histograms(y_true, y_prob, plots_dir=run_dirs["plots_dir"], show=True)
+    plot_confusion_matrix(
+        metrics["confusion_matrix"],
+        class_names=class_names or _default_class_names(num_classes),
+        title="HFTNet - Confusion Matrix",
+        plots_dir=run_dirs["plots_dir"],
+        show=True,
+    )
+    plot_roc_curves(y_true, y_prob, num_classes, plots_dir=run_dirs["plots_dir"], show=True)
+    plot_pr_curves(y_true, y_prob, num_classes, plots_dir=run_dirs["plots_dir"], show=True)
 
-    model_path = os.path.join(run_dirs["models_dir"], "hftnet_breakhis.pth")
+    model_path = os.path.join(run_dirs["models_dir"], model_filename)
     torch.save(model.state_dict(), model_path)
     print("Modelo salvo como", model_path)
 
     return model, history, best_outputs, run_dirs
+
+
+def classification_report_safe(y_true, y_pred, class_names):
+    from sklearn.metrics import classification_report
+    return classification_report(y_true, y_pred, target_names=class_names, zero_division=0, output_dict=True)
+
+
+def run_breakhis_baseline_holdout(
+    base_path,
+    mode="multiclass",
+    val_fraction=0.2,
+    seed=SEED,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+):
+    df = parse_breakhis_dataset(base_path, mode=mode)
+    train_df, val_df = split_dataframe_holdout(df, val_fraction=val_fraction, seed=seed)
+    num_classes = int(df["label"].nunique())
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        image_loader=load_rgb_pil,
+        num_classes=num_classes,
+        domain="histology",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        model_filename="hftnet_breakhis.pth",
+        class_names=_default_class_names(num_classes),
+    )
+
+
+def run_breakhis_baseline_fold(
+    csv_path,
+    fold=0,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+):
+    df = pd.read_csv(csv_path)
+    train_df = df[df["fold"] != fold].reset_index(drop=True)
+    val_df = df[df["fold"] == fold].reset_index(drop=True)
+    num_classes = int(df["label"].nunique())
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        image_loader=load_rgb_pil,
+        num_classes=num_classes,
+        domain="histology",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        model_filename="hftnet_breakhis.pth",
+        class_names=_default_class_names(num_classes),
+    )
+
+
+def run_inbreast_baseline_fold(
+    csv_path,
+    fold=0,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+):
+    df = pd.read_csv(csv_path)
+    train_df = df[df["fold"] != fold].reset_index(drop=True)
+    val_df = df[df["fold"] == fold].reset_index(drop=True)
+    num_classes = int(df["label"].nunique())
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        image_loader=load_dicom_pil,
+        num_classes=num_classes,
+        domain="mammography",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        model_filename="hftnet_inbreast.pth",
+        class_names=_default_class_names(num_classes),
+    )
+
+
+def run_inbreast_baseline_holdout(
+    csv_path,
+    val_fraction=0.2,
+    seed=SEED,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+):
+    df = pd.read_csv(csv_path)
+    train_df, val_df = split_dataframe_holdout(df, val_fraction=val_fraction, seed=seed)
+    num_classes = int(df["label"].nunique())
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        image_loader=load_dicom_pil,
+        num_classes=num_classes,
+        domain="mammography",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        model_filename="hftnet_inbreast.pth",
+        class_names=_default_class_names(num_classes),
+    )
+
+
+def run_transfer_breakhis_to_inbreast(
+    inbreast_csv_path,
+    histology_weights_path=None,
+    val_fraction=0.2,
+    seed=SEED,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+    freeze_except_classifier=True,
+):
+    histology_weights_path = _resolve_transfer_weights(
+        histology_weights_path,
+        checkpoint_name="hftnet_breakhis.pth",
+    )
+    df = pd.read_csv(inbreast_csv_path)
+    train_df, val_df = split_dataframe_holdout(df, val_fraction=val_fraction, seed=seed)
+    num_classes = int(df["label"].nunique())
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        image_loader=load_dicom_pil,
+        num_classes=num_classes,
+        domain="mammography",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        weights_path=histology_weights_path,
+        freeze_except_classifier=freeze_except_classifier,
+        model_filename="hftnet_breakhis_to_inbreast_tl.pth",
+        class_names=_default_class_names(num_classes),
+    )

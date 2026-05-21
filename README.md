@@ -1,583 +1,201 @@
-﻿ Documentacao Tecnica Completa do Projeto
+# Breast Cancer Experiments
 
+Repositório de experimentos para classificação de imagens médicas relacionadas ao câncer de mama, com foco em:
 
-1. Histopatologia (BreaKHis): imagens de lamina histologica, com texturas complexas e padroes microscópicos.
-2. Mamografia (INBreast): imagens radiologicas em DICOM, com contraste baixo, ruido e alto grau de variabilidade.
+- classificação histopatológica no dataset `BreaKHis`;
+- classificação mamográfica no dataset `INBreast`;
+- transferência de aprendizado entre domínios de histologia e mamografia;
+- comparação entre diferentes arquiteturas profundas, incluindo `SEConformer`, `HFTNet` e `HistoDX`.
 
-Esses dominios sao bastante diferentes. A histologia apresenta padroes locais ricos (celulas, estruturas glandulares), enquanto a mamografia apresenta padroes globais e sutis (masas, assimetrias, calcificacoes). A transferencia entre esses dominios exige cuidado para evitar sobreajuste e catastrofica degradacao das representacoes aprendidas.
+## Objetivo
 
+Este projeto organiza experimentos de aprendizado profundo voltados à análise de câncer de mama em dois domínios distintos:
 
-2. Datasets
+- `Histologia`: imagens microscópicas de tecido tumoral mamário;
+- `Mamografia`: imagens de mamografia digital com rótulos clínicos baseados em `BI-RADS`.
 
-2.1 BreaKHis (Histologia)
-Dominio: microscopia de tecido mamario.
-Classes:
-  - Binario: benigno vs maligno.
-  - Multiclasse: 8 subtipos histologicos.
-Desafio principal: desbalanceamento entre classes e alta variabilidade intra-classe.
+A proposta central é investigar o desempenho de modelos no domínio de origem e avaliar, em especial, a viabilidade de reutilização de representações aprendidas em cenários de transferência de aprendizado entre domínios médicos visualmente distintos.
 
-2.2 INBreast (Mamografia)
-Dominio: mamografia (DICOM).
-Labels principais:
-  - BI-RADS: 1–6, escala clinica de suspeita.
-  - ACR: densidade mamaria (usado em trabalhos especificos).
-Aqui foi adotado:
-  - Binario: BI-RADS >= 4 como maligno.
-  - Multiclasse: BI-RADS 1–6 (mapeado para 0–5).
+## Datasets Utilizados
 
-Desafio principal: dataset pequeno, dominio distinto e imagens DICOM que precisam de normalizacao.
+### 1. BreaKHis
 
+O `BreaKHis` é um dataset de imagens histopatológicas de câncer de mama amplamente utilizado em tarefas de classificação.
 
-3. Preprocessamento
+Principais características:
 
-3.1 Histologia (BreaKHis)
-Imagens ja em RGB.
-Normalizacao simples (mean/ std).\n- Augmentations para robustez: flips, rotacoes, affine.
+- `7.909` imagens microscópicas;
+- `82` pacientes;
+- `2.480` imagens benignas;
+- `5.429` imagens malignas;
+- fatores de ampliação: `40X`, `100X`, `200X` e `400X`;
+- resolução original de `700 x 460` pixels;
+- imagens `RGB` com `3 canais`;
+- profundidade de `8 bits` por canal;
+- formato `PNG`.
 
-3.2 Mamografia (INBreast DICOM)
-Conversao DICOM:
-  - Leitura do pixel array.
-  - Rescale slope/intercept (se existir).
-  - Inversao se MONOCHROME1.
-  - Normalizacao para 0–255.
-  - Conversao para 3 canais (RGB fake) para compatibilidade com CNN.
+Distribuição por ampliação:
 
+- `40X`: `1.995` imagens;
+- `100X`: `2.081` imagens;
+- `200X`: `2.013` imagens;
+- `400X`: `1.820` imagens.
 
-4. Balanceamento de Classes
+Estrutura local no projeto:
 
-O desbalanceamento e comum em datasets medicos. Foram aplicadas duas estrategias principais:
+- `BrestCancer Datasets/BreaKHis/`
 
-1. WeightedRandomSampler (PyTorch)
-   - Superamostra classes minoritarias.
-   - Ajuda a expor o modelo a exemplos raros durante o treino.
+Link de download:
 
-2. CrossEntropyLoss com pesos
-   - Penaliza mais erros em classes minoritarias.
-   - Complementa o sampler e estabiliza o gradiente.
+- `https://www.kaggle.com/datasets/ambarish/breakhis`
 
-Essas estrategias foram aplicadas nos seguintes modelos:
-SEConformer (histologia e INBreast)
-SEConformer Transfer Learning
-HFTNet
-HistoDX
+Referência acadêmica:
 
+- Spanhol, F. A., Oliveira, L. S., Petitjean, C., Heutte, L. "A Dataset for Breast Cancer Histopathological Image Classification."
 
-5. Augmentation
+### 2. INBreast
 
-Augmentations aumentam a diversidade do dataset e reduzem overfitting. As principais transformacoes aplicadas:
+O `INBreast` é um conjunto de mamografias digitais de campo total, utilizado neste projeto para classificação no domínio mamográfico.
 
-Flip horizontal e vertical: simula variacoes de orientacao.
-Rotacoes pequenas (10–15 graus): invariancia a pequenos angulos.
-Affine (shear + translate): simula deformacoes anatomicas e variacoes no posicionamento.
+Principais características:
 
-Em histologia, essas transformacoes sao altamente efetivas porque a orientacao da lamina e arbitraria. Em mamografia, sao usadas com cautela, mas ainda ajudam a melhorar a robustez do classificador.
+- `115` casos;
+- `410` imagens;
+- `90` casos com `4 imagens por exame`;
+- `25` casos de pacientes submetidas à mastectomia, com `2 imagens por exame`;
+- presença de anotações especializadas em `XML`;
+- inclusão de diferentes achados, como:
+  - massas;
+  - calcificações;
+  - assimetrias;
+  - distorções.
 
+No projeto, o dataset é utilizado em formulações associadas à escala `BI-RADS`, com foco em classificação multiclasse.
 
-6. Modelos e Arquiteturas
+Estrutura local relacionada:
 
-6.1 SEConformer
+- `INbreast_Folds.csv`
+- rotinas de leitura e preparação dentro dos módulos dos modelos
 
-Objetivo: classificar imagens binario/multiclasse em histologia e mamografia.
+Link de download:
 
-Arquitetura:
-Blocos convolucionais com Squeeze-and-Excitation (SE).
-Conformer integra:
-  - CNN: padroes locais (textura, borda).
-  - Multihead Attention: padroes globais e dependencias longas.
+- `https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset`
 
-Racional tecnico:
-SE melhora discriminacao ao realcar canais importantes.
-Conformer reduz dependencia exclusiva de convolucao e permite atencao global.
+Referência acadêmica:
 
-Treinamento:
-Loss: CrossEntropy com pesos.
-Sampler: WeightedRandomSampler.
-Augmentation ativa.
+- Moreira, I. C., Amaral, I., Domingues, I., Cardoso, A., Cardoso, M. J., Cardoso, J. S. "INbreast: Toward a Full-field Digital Mammographic Database."
 
+## Modelos e Experimentos
 
-6.2 SEConformer Transfer Learning (Histologia -> Mamografia)
+Os principais experimentos do repositório estão organizados em torno dos seguintes modelos:
 
-Objetivo: aproveitar representacoes aprendidas em histologia para mamografia.
+- `SEConformer`: arquitetura híbrida baseada em convolução, recalibração de canais e atenção;
+- `SEConformer_TL`: configuração experimental voltada à transferência de aprendizado para o domínio mamográfico;
+- `HFTNET`: arquitetura de fusão heterogênea de múltiplos extratores profundos;
+- `HISTODX`: baseline baseada em backbone moderno para classificação histopatológica;
+- `HISTODX_TORCH`: variante experimental em PyTorch;
+- `SqueezeNet_SVM`: experimento adicional com abordagem híbrida.
 
-Pipeline:
-1. Treina SEConformer em histologia.
-2. Carrega pesos no modelo para mamografia.
-3. Congela backbone (SE + Conformer).
-4. Ajusta somente o classificador final.
+## Organização do Repositório
 
-Justificativa:
-O backbone captura padroes genericos (texturas, contraste, bordas) que podem ser transferidos.
-Congelar reduz risco de overfitting e catastrofica forgetting.
-Somente a camada final se adapta a distribuicao do dataset alvo.
+### Diretórios principais
 
-Configuracao atual:
-Multiclasse BI-RADS 1–6.
-Balanceamento e augmentation ativos.
+- `SEConformer/`: implementação modular do modelo SEConformer;
+- `SEConformer_TL/`: rotinas de transferência de aprendizado com pesos previamente treinados;
+- `HFTNET/`: implementação do HFTNet;
+- `HISTODX/`: implementação da baseline HistoDX;
+- `HISTODX_TORCH/`: variante da baseline em PyTorch;
+- `SqueezeNet_SVM/`: experimentos complementares;
+- `results/`: métricas, históricos, modelos salvos e gráficos gerados;
+- `BrestCancer Datasets/`: armazenamento local dos datasets;
+- `.ipynb_checkpoints/`: checkpoints automáticos de notebooks.
 
+### Arquivos relevantes na raiz
 
-6.3 HFTNet
+- `SEConformer.ipynb`: experimento do SEConformer;
+- `SEConformer_INBreast_DICOM.ipynb`: experimento no domínio mamográfico;
+- `SEConformer_TL_INBreast_DICOM.ipynb`: transferência de aprendizado para INBreast;
+- `HFT-Net completo.ipynb`: notebook do HFTNet;
+- `HistoDX.ipynb`: notebook do HistoDX;
+- `Folds.csv`, `Folds_HFT.csv`, `INbreast_Folds.csv`: divisões e particionamentos experimentais;
+- `seconformer_comparacao.tex`: comparação textual dos resultados do SEConformer;
+- `secao_transferencia_fapesp.tex`: seção em LaTeX sobre transferência entre domínios;
+- `secao_baselines_fapesp.tex`: seção em LaTeX com tabela resumida de resultados.
 
-Objetivo: classificar 8 subtipos de histologia (multiclasse).
+## Estrutura dos Módulos
 
-Arquitetura:
-Ensemble/ fusao de backbones heterogeneos:
-  - DenseNet, Xception (CNNs)
-  - ViT, DeiT, Swin (Transformers)
+Nas implementações modulares, a organização tende a seguir o padrão:
 
-Racional tecnico:
-CNNs capturam textura local.
-Transformers capturam relacoes globais.
-Fusao permite maior poder representacional.
+- `config.py`: hiperparâmetros e configurações gerais;
+- `data.py`: leitura, parsing, transformações e particionamento dos dados;
+- `model.py`: definição das arquiteturas;
+- `train.py`: treinamento e, em alguns casos, rotinas de transferência;
+- `eval.py`: avaliação e métricas;
+- `io_utils.py`: persistência de resultados e organização de diretórios de execução.
 
-Treinamento:
-Augmentation forte.
-Loss com pesos para balanceamento.
+## Resultados Gerados
 
+As execuções costumam salvar artefatos em `results/`, incluindo:
 
-6.4 HistoDX 
+- `final_metrics.json`;
+- `history.csv`;
+- pesos dos modelos treinados;
+- curvas de treinamento;
+- matrizes de confusão;
+- curvas ROC e gráficos auxiliares.
 
-Objetivo: classificar benigno vs maligno em histologia.
+Exemplos já presentes no repositório:
 
-Arquitetura:
-EfficientNetV2-S como backbone.
-Classificador final custom.
+- `results/SEConformer/...`
+- `results/SEConformer_TL/...`
 
-Treinamento:
-Augmentation basica.
-Balanceamento via sampler + class weights.
+## Fluxo Geral de Uso
 
+### 1. Baixar os datasets
 
+Baixe manualmente os datasets a partir dos links:
 
-7. Transferencia de Aprendizado (Resumo Tecnico)
+- `BreaKHis`: `https://www.kaggle.com/datasets/ambarish/breakhis`
+- `INBreast`: `https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset`
 
-Transfer learning foi aplicado no SEConformer, com estrategia conservadora:
-Congelamento do backbone.
-Ajuste apenas do classificador.
+### 2. Organizar os arquivos localmente
 
-Beneficios:
-Menor risco de overfitting.
-Estabilidade em datasets pequenos (INBreast).
-Preserva representacoes robustas aprendidas no dominio fonte.
+Mantenha os dados em caminhos compatíveis com o projeto, especialmente dentro de:
 
-Riscos:
-Se dominios forem muito distintos, pode limitar a adaptacao.
-Solucao: fine-tuning em duas fases (congelado -> descongelado).
+- `BrestCancer Datasets/`
 
+Se necessário, ajuste os caminhos diretamente em:
 
-8. Desenvolvimento Tecnico (Como o Codigo Foi Construido)
+- notebooks;
+- `config.py`;
+- scripts de treinamento.
 
-Esta secao descreve o desenho do codigo e as decisoes de implementacao.
+### 3. Executar os experimentos
 
-8.1 Organizacao em pacotes
-Cada modelo foi estruturado em uma pasta com modulos `.py` separados:
-`data.py` -> leitura e preparo dos dados.
-`model.py` -> definicao da arquitetura.
-`train.py` -> loop de treino e validacao.
-`eval.py` (quando aplicavel) -> metricas e graficos.
-`io_utils.py` -> salvamento de logs, metricas e imagens.
+O repositório contém tanto notebooks quanto implementações modulares. Em geral, os experimentos podem ser conduzidos de duas formas:
 
-Essa separacao facilita manutencao e permite reaproveitar codigo entre modelos.
+- execução pelos notebooks da raiz;
+- importação das rotinas presentes nas pastas dos modelos.
 
-8.2 Padrao de Treinamento
-Todos os treinamentos seguem o mesmo fluxo:
-1. Carregar dataset e gerar splits.
-2. Criar DataLoaders com sampler balanceado.
-3. Instanciar modelo.
-4. Treinar por epoca (loss + atualizacao de pesos).
-5. Validar e registrar metricas.
-6. Salvar checkpoints e graficos.
+Exemplos de pontos de entrada:
 
-8.3 Design de augmentations
-As transformações foram escolhidas para aumentar robustez sem distorcer semântica clínica.
-Em mamografia, augmentations foram mantidas moderadas (rotação pequena).
+- `SEConformer.ipynb`
+- `SEConformer_INBreast_DICOM.ipynb`
+- `SEConformer_TL_INBreast_DICOM.ipynb`
+- `HFT-Net completo.ipynb`
+- `HistoDX.ipynb`
 
-8.4 Balanceamento e impacto no treinamento
-O sampler garante que todas as classes aparecem com frequência similar.
-A loss ponderada evita que o modelo aprenda a sempre prever a classe majoritária.
+## Observações Importantes
 
-8.5 Transfer Learning
-A implementação carrega pesos com `strict=False` para compatibilidade.
-Camadas congeladas com `requires grad=False`.
-Apenas o classificador final e atualizado.
+- O nome da pasta `BrestCancer Datasets` foi mantido conforme está no workspace atual.
+- Os resultados de transferência entre domínios devem ser interpretados com cautela, pois histologia e mamografia apresentam forte diferença de escala, textura, semântica visual e estrutura de rótulos.
+- Parte dos relatórios em LaTeX do projeto já foi organizada para uso em documentação acadêmica e relatórios institucionais.
 
+## Referências de Dados
 
+- BreaKHis: `https://www.kaggle.com/datasets/ambarish/breakhis`
+- INBreast: `https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset`
 
+## Status do Projeto
 
-
-
-
-# Multimodal Representation Learning for Breast Cancer Risk
-
-## Mamografia (Imagem) + Genética (PGS/PRS)
-
-------------------------------------------------------------------------
-## 📊 Datasets Utilizados
-
-### 🧬 Polygenic Score (PGS) Catalog – EBI
-🔗 https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/
-
-Este dataset é mantido pelo **European Bioinformatics Institute (EBI)** e contém **Polygenic Risk Scores (PRS/PGS)** para diversas doenças e características complexas. Porém nesse estudo, selecionamos somente o breast cancer. 
-Os scores são calculados a partir de variantes genéticas (SNPs) e são amplamente utilizados em estudos de:
-- Genômica
-- Epidemiologia genética
-- Predição de risco de doenças complexas, incluindo câncer
-
-Os dados incluem pesos genéticos, identificadores de variantes e metadados associados a cada score.
-
----
-
-### 🩻 CBIS-DDSM – Cancer Imaging Archive
-🔗 https://www.cancerimagingarchive.net/wp-content/uploads/CBIS-DDSM-All-doiJNLP-zzWs5zfZ.tcia
-
-O **CBIS-DDSM (Curated Breast Imaging Subset of DDSM)** é um dataset público de imagens médicas focado em **mamografias para detecção de câncer de mama**.  
-Ele é uma versão curada do dataset DDSM original e inclui:
-- Imagens de mamografia em alta resolução
-- Anotações de lesões (benignas e malignas)
-- Segmentações e metadados clínicos
-
-Este dataset é amplamente utilizado em pesquisas de:
-- Visão computacional
-- Deep Learning
-- Diagnóstico assistido por computador (CAD) em câncer de mama
-
-## 1. Motivação Científica
-
-Em cenários reais, é comum que diferentes modalidades de dados
-biomédicos provenham de **cohorts distintos**, impossibilitando o
-pareamento direto de indivíduos. Este projeto propõe uma solução
-metodologicamente correta:
-
-> **Elevar a multimodalidade ao nível de representação, não ao nível do
-> paciente.**
-
-Cada modalidade aprende um espaço latente próprio, e a integração ocorre
-por **alinhamento geométrico entre espaços latentes**.
-
-Objetivo científico: \> Investigar se diferentes modalidades capturam
-padrões estruturais convergentes \> de risco para câncer de mama.
-
-Outra possível abordagem encontrada na literatura:https://www.nature.com/articles/s42256-025-01052-4#Sec12
-
-------------------------------------------------------------------------
-
-## 2. Experimento 1 --- Mamografia
-
-### Dataset
-
--   CBIS-DDSM (TCIA)
--   Formato: DICOM
--   Organização: séries em pastas como `Calc-Test_P_00038_LEFT_CC`
-
-### Pipeline
-
-1.  Varredura das pastas CBIS-DDSM\
-2.  Localização dos arquivos `.dcm`\
-3.  Leitura DICOM com:
-    -   VOI LUT
-    -   Correção de MONOCHROME1
-    -   RescaleSlope / Intercept
-4.  Normalização por percentis
-5.  Pré-processamento:
-    -   Resize para 224×224
-    -   Conversão para tensor \[3,224,224\]
-6.  Extração de embedding por CNN (ResNet50 sem cabeça)
-7.  Agregação por série (média)
-8.  Saídas:
-    -   `mammo_embeddings.npy`
-    -   `mammo_metadata.csv`
-
-### Produto
-
-Um vetor de alta dimensão por série de mamografia, representando padrões
-visuais relacionados a risco.
-
-------------------------------------------------------------------------
-
-## 3. Experimento 2 --- Genética (PGS/PRS)
-
-### Dataset
-
--   PGS Catalog (scores poligênicos)
-
-### Pipeline
-
-1.  Leitura dos arquivos PGS
-2.  Extração de estatísticas por score:
-    -   número de SNPs
-    -   média, desvio, soma dos pesos, etc.
-3.  Construção de matriz tabular
-4.  Treinamento de Autoencoder
-5.  Compressão para espaço latente
-
-### Produto
-
-Um vetor latente por score genético, capturando padrões globais de
-risco.
-
-------------------------------------------------------------------------
-
-## 4. Compressão Latente
-
-Tanto imagem quanto genética passam por Autoencoders independentes:
-
--   Entrada: embedding original
--   Saída: espaço latente compacto (ex.: 3--32 dimensões)
--   Arquivos finais:
-    -   `autoencoder_latent_space.csv` (imagem)
-    -   `genetic_latent_space.csv` (genética)
-
-Formato:
-
-  join_id   z1   z2   z3   ...
-  --------- ---- ---- ---- -----
-
-------------------------------------------------------------------------
-
-## 5. Integração Multimodal sem Pareamento
-
-Como não há pacientes em comum, **não é possível** usar CCA por
-indivíduo.
-
-Solução adotada:
-
-1.  Padronizar cada espaço separadamente
-2.  Criar protótipos via KMeans em cada espaço
-3.  Calcular similaridade entre protótipos
-4.  Matching ótimo (Hungarian Algorithm)
-5.  Estimar transformação geométrica (Procrustes)
-6.  Alinhar genética → imagem
-
-Produto:
-
--   `shared_space_images.csv`
--   `shared_space_genetics.csv`
--   `alignment_matrix_R.npy`
-
-Agora ambas modalidades vivem em um **espaço compartilhado**.
-
-------------------------------------------------------------------------
-
-## 6. Testes Realizados
-
-### Diagnóstico de cada espaço
-
--   Histogramas por dimensão
--   Correlação interna
--   PCA 2D
--   KMeans + Silhouette
--   Detecção de outliers
-
-### Integração estrutural
-
--   Similaridade entre protótipos (antes/depois)
--   Teste de permutação
--   Visualização em PCA do espaço alinhado
-
-Esses testes avaliam se existe **estrutura alinhável** entre
-modalidades.
-
-------------------------------------------------------------------------
-
-## 7. O que seria possível com pacientes pareados
-
-Se existissem dados de imagem e genética para os **mesmos pacientes**:
-
-1.  CCA / Deep CCA por indivíduo
-2.  Retrieval cross-modal (imagem → genética)
-3.  Concordância de risco
-4.  Modelos supervisionados multimodais
-5.  AUC, Recall@K, MRR
-6.  Testes de permutação por paciente
-
-O notebook inclui células prontas para esses testes, documentando
-claramente o caminho futuro.
-
-------------------------------------------------------------------------
-
-## 8. Conclusão
-
-Este projeto:
-
--   Evita pareamento artificial
--   Mantém validade estatística
--   É eticamente defensável
--   Demonstra convergência estrutural entre modalidades
--   Prepara o terreno para integração real quando dados pareados
-    existirem
-
-> Multimodalidade por representação é a solução correta quando cohorts
-> são disjuntos.
-# Multimodal Representation Learning for Breast Cancer Risk
-
-## Mamografia (Imagem) + Genética (PGS/PRS)
-
-------------------------------------------------------------------------
-
-## 1. Motivação Científica
-
-Em cenários reais, é comum que diferentes modalidades de dados
-biomédicos provenham de **cohorts distintos**, impossibilitando o
-pareamento direto de indivíduos. Este projeto propõe uma solução
-metodologicamente correta:
-
-> **Elevar a multimodalidade ao nível de representação, não ao nível do
-> paciente.**
-
-Cada modalidade aprende um espaço latente próprio, e a integração ocorre
-por **alinhamento geométrico entre espaços latentes**.
-
-Objetivo científico: \> Investigar se diferentes modalidades capturam
-padrões estruturais convergentes \> de risco para câncer de mama.
-
-------------------------------------------------------------------------
-
-## 2. Experimento 1 --- Mamografia
-
-### Dataset
-
--   CBIS-DDSM (TCIA)
--   Formato: DICOM
--   Organização: séries em pastas como `Calc-Test_P_00038_LEFT_CC`
-
-### Pipeline
-
-1.  Varredura das pastas CBIS-DDSM\
-2.  Localização dos arquivos `.dcm`\
-3.  Leitura DICOM com:
-    -   VOI LUT
-    -   Correção de MONOCHROME1
-    -   RescaleSlope / Intercept
-4.  Normalização por percentis
-5.  Pré-processamento:
-    -   Resize para 224×224
-    -   Conversão para tensor \[3,224,224\]
-6.  Extração de embedding por CNN (ResNet50 sem cabeça)
-7.  Agregação por série (média)
-8.  Saídas:
-    -   `mammo_embeddings.npy`
-    -   `mammo_metadata.csv`
-
-### Produto
-
-Um vetor de alta dimensão por série de mamografia, representando padrões
-visuais relacionados a risco.
-
-------------------------------------------------------------------------
-
-## 3. Experimento 2 --- Genética (PGS/PRS)
-
-### Dataset
-
--   PGS Catalog (scores poligênicos)
-
-### Pipeline
-
-1.  Leitura dos arquivos PGS
-2.  Extração de estatísticas por score:
-    -   número de SNPs
-    -   média, desvio, soma dos pesos, etc.
-3.  Construção de matriz tabular
-4.  Treinamento de Autoencoder
-5.  Compressão para espaço latente
-
-### Produto
-
-Um vetor latente por score genético, capturando padrões globais de
-risco.
-
-------------------------------------------------------------------------
-
-## 4. Compressão Latente
-
-Tanto imagem quanto genética passam por Autoencoders independentes:
-
--   Entrada: embedding original
--   Saída: espaço latente compacto (ex.: 3--32 dimensões)
--   Arquivos finais:
-    -   `autoencoder_latent_space.csv` (imagem)
-    -   `genetic_latent_space.csv` (genética)
-
-Formato:
-
-  join_id   z1   z2   z3   ...
-  --------- ---- ---- ---- -----
-
-------------------------------------------------------------------------
-
-## 5. Integração Multimodal sem Pareamento
-
-Como não há pacientes em comum, **não é possível** usar CCA por
-indivíduo.
-
-Solução adotada:
-
-1.  Padronizar cada espaço separadamente
-2.  Criar protótipos via KMeans em cada espaço
-3.  Calcular similaridade entre protótipos
-4.  Matching ótimo (Hungarian Algorithm)
-5.  Estimar transformação geométrica (Procrustes)
-6.  Alinhar genética → imagem
-
-Produto:
-
--   `shared_space_images.csv`
--   `shared_space_genetics.csv`
--   `alignment_matrix_R.npy`
-
-Agora ambas modalidades vivem em um **espaço compartilhado**.
-
-------------------------------------------------------------------------
-
-## 6. Testes Realizados
-
-### Diagnóstico de cada espaço
-
--   Histogramas por dimensão
--   Correlação interna
--   PCA 2D
--   KMeans + Silhouette
--   Detecção de outliers
-
-### Integração estrutural
-
--   Similaridade entre protótipos (antes/depois)
--   Teste de permutação
--   Visualização em PCA do espaço alinhado
-
-Esses testes avaliam se existe **estrutura alinhável** entre
-modalidades.
-
-------------------------------------------------------------------------
-
-## 7. O que seria possível com pacientes pareados
-
-Se existissem dados de imagem e genética para os **mesmos pacientes**:
-
-1.  CCA / Deep CCA por indivíduo
-2.  Retrieval cross-modal (imagem → genética)
-3.  Concordância de risco
-4.  Modelos supervisionados multimodais
-5.  AUC, Recall@K, MRR
-6.  Testes de permutação por paciente
-
-O notebook inclui células prontas para esses testes, documentando
-claramente o caminho futuro.
-
-------------------------------------------------------------------------
-
-## 8. Conclusão
-
-Este projeto:
-
--   Evita pareamento artificial
--   Mantém validade estatística
--   É eticamente defensável
--   Demonstra convergência estrutural entre modalidades
--   Prepara o terreno para integração real quando dados pareados
-    existirem
-
-> Multimodalidade por representação é a solução correta quando cohorts
-> são disjuntos.
-
-
-
+O repositório reúne código experimental, notebooks, resultados intermediários e textos de apoio em LaTeX. Ele funciona como base de pesquisa para comparação entre arquiteturas e análise de transferência de aprendizado aplicada ao diagnóstico auxiliado por imagem em câncer de mama.
