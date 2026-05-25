@@ -258,13 +258,7 @@ Eles não devem ser apresentados como reprodução oficial ou fiel do estado da 
 
 ## Próximos Passos Recomendados
 
-Se o objetivo for aproximar mais os resultados dos artigos, os passos com maior impacto tendem a ser:
-
-1. reproduzir exatamente o protocolo de split de cada paper;
-2. alinhar pré-processamento e resolução de entrada;
-3. repetir experimentos com múltiplas seeds;
-4. separar avaliação por paciente quando aplicável;
-5. ajustar melhor fine-tuning e descongelamento no cenário de transferência.
+Se o objetivo for aproximar mais os resultados dos artigos, o passo mais importante é reproduzir exatamente o protocolo de split de cada paper.
 
 ## Resumo
 
