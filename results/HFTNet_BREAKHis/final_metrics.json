@@ -1,6 +1,6 @@
 {
   "model": "HFTNet",
-  "scenario": "Histologia",
+  "scenario": "BREAKHis",
   "epochs": 100,
   "accuracy": 0.9162,
   "precision": 0.9635,

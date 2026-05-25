@@ -1,6 +1,6 @@
 {
   "model": "SEConformer",
-  "scenario": "Histologia",
+  "scenario": "BREAKHis",
   "epochs": 100,
   "accuracy": 0.9279,
   "precision": 0.9857,

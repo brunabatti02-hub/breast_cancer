@@ -21,6 +21,8 @@ from sklearn.preprocessing import label_binarize
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
+from histology_datasets import build_bach_dataframes, build_bracs_dataframes
+
 from .config import BATCH_SIZE, EPOCHS, IMG_SIZE, LR, NUM_WORKERS, SEED
 from .data import (
     ImageClassificationDataset,
@@ -97,7 +99,7 @@ def compute_metrics(y_true, y_pred, y_prob, num_classes):
 
     if num_classes == 2:
         positive_prob = y_prob[:, 1]
-        cm = confusion_matrix(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
         tn, fp, fn, tp = cm.ravel()
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
         metrics.update({
@@ -105,15 +107,14 @@ def compute_metrics(y_true, y_pred, y_prob, num_classes):
             "recall": float(recall_score(y_true, y_pred, zero_division=0)),
             "specificity": float(specificity),
             "f1_score": float(f1_score(y_true, y_pred, zero_division=0)),
-            "auc": float(roc_auc_score(y_true, positive_prob)),
+            "auc": _safe_auc_binary(y_true, positive_prob),
         })
     else:
-        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
         metrics.update({
             "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
             "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
             "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
-            "auc_macro_ovr": float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr")),
+            "auc_macro_ovr": _safe_auc_multiclass(y_true, y_prob, num_classes),
         })
 
     return metrics
@@ -167,13 +168,16 @@ def plot_roc_curves(y_true, y_prob, num_classes, plots_dir=None, show=True):
 
     if num_classes == 2:
         fpr, tpr, _ = roc_curve(y_true, y_prob[:, 1])
-        roc_auc = roc_auc_score(y_true, y_prob[:, 1])
+        roc_auc = _safe_auc_binary(y_true, y_prob[:, 1])
         plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.4f}")
     else:
         y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
         for i in range(num_classes):
-            fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
-            roc_auc = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
+            try:
+                fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
+                roc_auc = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
+            except ValueError:
+                continue
             plt.plot(fpr, tpr, label=f"Classe {i} (AUC={roc_auc:.2f})")
 
     plt.plot([0, 1], [0, 1], "k--")
@@ -217,6 +221,21 @@ def _default_class_names(num_classes):
     if num_classes == 2:
         return ["Benign", "Malignant"]
     return [f"Class {idx}" for idx in range(num_classes)]
+
+
+def _safe_auc_binary(y_true, positive_prob):
+    try:
+        return float(roc_auc_score(y_true, positive_prob))
+    except ValueError:
+        return 0.0
+
+
+def _safe_auc_multiclass(y_true, y_prob, num_classes):
+    try:
+        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+        return float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr"))
+    except ValueError:
+        return 0.0
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device):
@@ -269,7 +288,7 @@ def validate_one_epoch(model, loader, criterion, num_classes, device):
     y_pred = np.array(preds_all)
     y_prob = np.array(probs_all)
     metrics = compute_metrics(y_true, y_pred, y_prob, num_classes)
-    metrics["confusion_matrix"] = confusion_matrix(y_true, y_pred)
+    metrics["confusion_matrix"] = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
     return epoch_loss, epoch_acc, metrics, y_true, y_pred, y_prob
 
 
@@ -279,6 +298,7 @@ def train_from_dataframes(
     image_loader,
     num_classes,
     domain,
+    test_df=None,
     epochs=EPOCHS,
     batch_size=BATCH_SIZE,
     lr=LR,
@@ -289,6 +309,7 @@ def train_from_dataframes(
     weights_path=None,
     freeze_backbones=False,
     freeze_except_classifier=False,
+    pretrained=True,
     model_filename="hftnet_model.pth",
     class_names=None,
 ):
@@ -302,6 +323,9 @@ def train_from_dataframes(
 
     train_ds = ImageClassificationDataset(train_df, image_loader=image_loader, train=True, img_size=img_size, domain=domain)
     val_ds = ImageClassificationDataset(val_df, image_loader=image_loader, train=False, img_size=img_size, domain=domain)
+    test_ds = None
+    if test_df is not None:
+        test_ds = ImageClassificationDataset(test_df, image_loader=image_loader, train=False, img_size=img_size, domain=domain)
 
     train_loader, loss_weights = _build_train_loader(
         train_ds,
@@ -311,8 +335,11 @@ def train_from_dataframes(
         balance=balance,
     )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS)
+    test_loader = None
+    if test_ds is not None:
+        test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS)
 
-    model = HFTNet(num_classes=num_classes, pretrained=True, freeze_backbones=freeze_backbones).to(device)
+    model = HFTNet(num_classes=num_classes, pretrained=pretrained, freeze_backbones=freeze_backbones).to(device)
     if weights_path:
         state = torch.load(weights_path, map_location=device)
         compatible = _filter_compatible_state_dict(model, state)
@@ -359,7 +386,12 @@ def train_from_dataframes(
             best_outputs = (y_true, y_pred, y_prob, metrics)
 
     model.load_state_dict(best_state)
-    y_true, y_pred, y_prob, metrics = best_outputs
+    if test_loader is not None:
+        _loss, _acc, metrics, y_true, y_pred, y_prob = validate_one_epoch(
+            model, test_loader, criterion, num_classes, device
+        )
+    else:
+        y_true, y_pred, y_prob, metrics = best_outputs
 
     final_metrics = {key: float(value) for key, value in metrics.items() if key != "confusion_matrix"}
     save_metrics(final_metrics, run_dirs["out_dir"], "final_metrics")
@@ -398,7 +430,14 @@ def train_from_dataframes(
 
 def classification_report_safe(y_true, y_pred, class_names):
     from sklearn.metrics import classification_report
-    return classification_report(y_true, y_pred, target_names=class_names, zero_division=0, output_dict=True)
+    return classification_report(
+        y_true,
+        y_pred,
+        labels=list(range(len(class_names))),
+        target_names=class_names,
+        zero_division=0,
+        output_dict=True,
+    )
 
 
 def run_breakhis_baseline_holdout(
@@ -420,6 +459,7 @@ def run_breakhis_baseline_holdout(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_rgb_pil,
         num_classes=num_classes,
         domain="histology",
@@ -453,6 +493,7 @@ def run_breakhis_baseline_fold(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_rgb_pil,
         num_classes=num_classes,
         domain="histology",
@@ -486,6 +527,7 @@ def run_inbreast_baseline_fold(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_dicom_pil,
         num_classes=num_classes,
         domain="mammography",
@@ -519,6 +561,7 @@ def run_inbreast_baseline_holdout(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_dicom_pil,
         num_classes=num_classes,
         domain="mammography",
@@ -558,6 +601,7 @@ def run_transfer_breakhis_to_inbreast(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_dicom_pil,
         num_classes=num_classes,
         domain="mammography",
@@ -570,6 +614,79 @@ def run_transfer_breakhis_to_inbreast(
         balance=balance,
         weights_path=histology_weights_path,
         freeze_except_classifier=freeze_except_classifier,
+        pretrained=True,
         model_filename="hftnet_breakhis_to_inbreast_tl.pth",
         class_names=_default_class_names(num_classes),
+    )
+
+
+def run_bracs_baseline(
+    dataset_path,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+    pretrained=False,
+):
+    train_df, val_df, test_df, class_names = build_bracs_dataframes(dataset_path)
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_loader=load_rgb_pil,
+        num_classes=int(train_df["label"].nunique()),
+        domain="histology",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        pretrained=pretrained,
+        model_filename="hftnet_bracs.pth",
+        class_names=class_names,
+    )
+
+
+def run_bach_baseline(
+    dataset_path,
+    val_fraction=0.15,
+    test_fraction=0.15,
+    seed=SEED,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    lr=LR,
+    device=None,
+    run_dirs=None,
+    img_size=IMG_SIZE,
+    balance=True,
+    pretrained=False,
+):
+    train_df, val_df, test_df, class_names = build_bach_dataframes(
+        dataset_path,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+    )
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_loader=load_rgb_pil,
+        num_classes=int(train_df["label"].nunique()),
+        domain="histology",
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        pretrained=pretrained,
+        model_filename="hftnet_bach.pth",
+        class_names=class_names,
     )

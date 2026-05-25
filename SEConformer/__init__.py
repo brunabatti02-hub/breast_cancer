@@ -13,6 +13,8 @@ from .eval import evaluate
 from .io_utils import find_best_previous_run, make_run_dirs, save_fig, save_metrics
 from .model import SEConformer
 from .train import (
+    train_bach_baseline,
+    train_bracs_baseline,
     train_breakhis_fold,
     train_breakhis_holdout,
     train_from_dataframes,

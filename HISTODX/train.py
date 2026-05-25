@@ -20,6 +20,8 @@ from sklearn.preprocessing import label_binarize
 from torch import nn
 from tqdm import tqdm
 
+from histology_datasets import build_bach_dataframes, build_bracs_dataframes
+
 from .config import BATCH_SIZE, EPOCHS, IMG_SIZE, LEARNING_RATE, SEED
 from .data import (
     build_inbreast_dataframe,
@@ -92,21 +94,35 @@ def evaluate(model, loader, device, num_classes):
             "precision": float(precision_score(y_true, y_pred, zero_division=0)),
             "recall": float(recall_score(y_true, y_pred, zero_division=0)),
             "f1_score": float(f1_score(y_true, y_pred, zero_division=0)),
-            "roc_auc": float(roc_auc_score(y_true, y_prob[:, 1])),
+            "roc_auc": _safe_auc_binary(y_true, y_prob[:, 1]),
         })
     else:
-        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
         metrics.update({
             "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
             "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
             "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
-            "auc_macro_ovr": float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr")),
+            "auc_macro_ovr": _safe_auc_multiclass(y_true, y_prob, num_classes),
         })
     return metrics, y_true, y_pred, y_prob
 
 
+def _safe_auc_binary(y_true, positive_prob):
+    try:
+        return float(roc_auc_score(y_true, positive_prob))
+    except ValueError:
+        return 0.0
+
+
+def _safe_auc_multiclass(y_true, y_prob, num_classes):
+    try:
+        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+        return float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr"))
+    except ValueError:
+        return 0.0
+
+
 def _plot_binary_outputs(y_true, y_pred, y_prob, run_dirs):
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     fig = plt.figure(figsize=(6, 5))
     sns.heatmap(
         cm,
@@ -124,7 +140,7 @@ def _plot_binary_outputs(y_true, y_pred, y_prob, run_dirs):
     plt.close(fig)
 
     fpr, tpr, _ = roc_curve(y_true, y_prob[:, 1])
-    roc_auc = roc_auc_score(y_true, y_prob[:, 1])
+    roc_auc = _safe_auc_binary(y_true, y_prob[:, 1])
     fig = plt.figure(figsize=(6, 5))
     plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.4f}")
     plt.plot([0, 1], [0, 1], linestyle="--")
@@ -151,7 +167,7 @@ def _plot_binary_outputs(y_true, y_pred, y_prob, run_dirs):
 
 
 def _plot_multiclass_outputs(y_true, y_pred, y_prob, run_dirs, num_classes):
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
     fig = plt.figure(figsize=(7, 6))
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
     plt.title("Matriz de Confusao")
@@ -164,8 +180,11 @@ def _plot_multiclass_outputs(y_true, y_pred, y_prob, run_dirs, num_classes):
     y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
     fig = plt.figure(figsize=(8, 6))
     for i in range(num_classes):
-        fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
-        auc_score = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
+        try:
+            fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
+            auc_score = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
+        except ValueError:
+            continue
         plt.plot(fpr, tpr, label=f"Classe {i} (AUC={auc_score:.2f})")
     plt.plot([0, 1], [0, 1], linestyle="--")
     plt.xlabel("FPR")
@@ -206,6 +225,7 @@ def train_from_dataframes(
     balance=True,
     weights_path=None,
     freeze_except_classifier=False,
+    pretrained=True,
     model_filename="histodx_torch.pt",
 ):
     set_seed(seed)
@@ -228,7 +248,7 @@ def train_from_dataframes(
     )
 
     loss_weights = compute_class_weights(train_df).to(device) if balance else None
-    model = build_histodx_torch(num_classes=num_classes, pretrained=True).to(device)
+    model = build_histodx_torch(num_classes=num_classes, pretrained=pretrained).to(device)
 
     if weights_path:
         state = torch.load(weights_path, map_location=device)
@@ -288,7 +308,7 @@ def train_from_dataframes(
 
     metrics, y_true, y_pred, y_prob = evaluate(model, test_loader, device, num_classes)
     save_metrics(metrics, run_dirs["out_dir"], "final_metrics")
-    pd.DataFrame(confusion_matrix(y_true, y_pred)).to_csv(
+    pd.DataFrame(confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))).to_csv(
         os.path.join(run_dirs["out_dir"], "final_confusion_matrix.csv"),
         index=False,
     )
@@ -454,5 +474,81 @@ def run_histodx_transfer_breakhis_to_inbreast(
         balance=balance,
         weights_path=histology_weights_path,
         freeze_except_classifier=freeze_except_classifier,
+        pretrained=True,
         model_filename="histodx_breakhis_to_inbreast_tl.pt",
+    )
+
+
+def run_histodx_bracs_baseline(
+    dataset_path,
+    img_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    epochs=EPOCHS,
+    learning_rate=LEARNING_RATE,
+    run_dirs=None,
+    seed=SEED,
+    device=None,
+    balance=True,
+    pretrained=False,
+):
+    train_df, val_df, test_df, class_names = build_bracs_dataframes(dataset_path)
+    del class_names
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_loader=load_rgb_pil,
+        domain="histology",
+        num_classes=int(train_df["label"].nunique()),
+        img_size=img_size,
+        batch_size=batch_size,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        run_dirs=run_dirs,
+        seed=seed,
+        device=device,
+        balance=balance,
+        pretrained=pretrained,
+        model_filename="histodx_bracs.pt",
+    )
+
+
+def run_histodx_bach_baseline(
+    dataset_path,
+    val_fraction=0.15,
+    test_fraction=0.15,
+    img_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    epochs=EPOCHS,
+    learning_rate=LEARNING_RATE,
+    run_dirs=None,
+    seed=SEED,
+    device=None,
+    balance=True,
+    pretrained=False,
+):
+    train_df, val_df, test_df, class_names = build_bach_dataframes(
+        dataset_path,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+    )
+    del class_names
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_loader=load_rgb_pil,
+        domain="histology",
+        num_classes=int(train_df["label"].nunique()),
+        img_size=img_size,
+        batch_size=batch_size,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        run_dirs=run_dirs,
+        seed=seed,
+        device=device,
+        balance=balance,
+        pretrained=pretrained,
+        model_filename="histodx_bach.pt",
     )

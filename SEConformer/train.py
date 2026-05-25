@@ -8,10 +8,15 @@ from torch import nn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
+from histology_datasets import build_bach_dataframes, build_bracs_dataframes
+
 from .config import DEVICE
 from .data import (
     ImageClassificationDataset,
+    build_eval_transform,
     build_breakhis_dataframe,
+    build_histology_moderate_train_transform,
+    build_histology_strong_train_transform,
     build_inbreast_csv,
     load_dicom_pil,
     load_rgb_pil,
@@ -22,7 +27,7 @@ from .io_utils import find_best_previous_run, make_run_dirs, save_metrics
 from .model import SEConformer
 
 
-def _build_train_loader(dataset, labels, batch_size, device, balance=True):
+def _build_train_loader(dataset, labels, batch_size, device, balance=True, epoch_size_multiplier=1.0):
     if not balance:
         return DataLoader(dataset, batch_size=batch_size, shuffle=True), None
 
@@ -30,7 +35,8 @@ def _build_train_loader(dataset, labels, batch_size, device, balance=True):
     class_counts = np.bincount(labels)
     class_weights = 1.0 / np.maximum(class_counts, 1)
     sample_weights = class_weights[labels]
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+    num_samples = max(len(sample_weights), int(len(sample_weights) * float(epoch_size_multiplier)))
+    sampler = WeightedRandomSampler(sample_weights, num_samples=num_samples, replacement=True)
     loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
     loss_weights = torch.tensor(class_weights, dtype=torch.float32, device=device)
     return loader, loss_weights
@@ -126,6 +132,7 @@ def train_from_dataframes(
     val_df,
     image_loader,
     num_classes,
+    test_df=None,
     epochs=10,
     batch_size=16,
     lr=1e-4,
@@ -136,12 +143,36 @@ def train_from_dataframes(
     weights_path=None,
     freeze_backbone=False,
     model_name="seconformer.pt",
+    train_transform=None,
+    eval_transform=None,
+    epoch_size_multiplier=1.0,
 ):
     if run_dirs is None:
         run_dirs = make_run_dirs()
 
-    train_ds = ImageClassificationDataset(train_df, image_loader=image_loader, train=True, img_size=img_size)
-    val_ds = ImageClassificationDataset(val_df, image_loader=image_loader, train=False, img_size=img_size)
+    train_ds = ImageClassificationDataset(
+        train_df,
+        image_loader=image_loader,
+        train=True,
+        img_size=img_size,
+        transforms_override=train_transform,
+    )
+    val_ds = ImageClassificationDataset(
+        val_df,
+        image_loader=image_loader,
+        train=False,
+        img_size=img_size,
+        transforms_override=eval_transform,
+    )
+    test_ds = None
+    if test_df is not None:
+        test_ds = ImageClassificationDataset(
+            test_df,
+            image_loader=image_loader,
+            train=False,
+            img_size=img_size,
+            transforms_override=eval_transform,
+        )
 
     train_loader, loss_weights = _build_train_loader(
         train_ds,
@@ -149,8 +180,10 @@ def train_from_dataframes(
         batch_size=batch_size,
         device=device,
         balance=balance,
+        epoch_size_multiplier=epoch_size_multiplier,
     )
     val_loader = DataLoader(val_ds, batch_size=batch_size)
+    test_loader = DataLoader(test_ds, batch_size=batch_size) if test_ds is not None else None
 
     model = SEConformer(num_classes=num_classes).to(device)
     if weights_path:
@@ -166,6 +199,9 @@ def train_from_dataframes(
 
     train_losses = []
     val_scores = []
+    best_score = float("-inf")
+    best_state = None
+    score_key = "f1_macro" if num_classes > 2 else "accuracy"
 
     for epoch in range(epochs):
         model.train()
@@ -199,12 +235,23 @@ def train_from_dataframes(
             out_dir=run_dirs["out_dir"],
         )
 
-        score_key = "accuracy"
         val_scores.append(metrics[score_key])
 
+        if metrics[score_key] > best_score:
+            best_score = metrics[score_key]
+            best_state = {
+                key: value.detach().cpu().clone()
+                for key, value in model.state_dict().items()
+            }
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        print(f"Melhor modelo restaurado com {score_key}={best_score:.4f}")
+
+    final_loader = test_loader if test_loader is not None else val_loader
     final_metrics = evaluate(
         model,
-        val_loader,
+        final_loader,
         device=device,
         num_classes=num_classes,
         plot=True,
@@ -238,6 +285,7 @@ def train_breakhis_fold(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_rgb_pil,
         num_classes=num_classes,
         epochs=epochs,
@@ -272,6 +320,7 @@ def train_breakhis_holdout(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_rgb_pil,
         num_classes=num_classes,
         epochs=epochs,
@@ -305,6 +354,7 @@ def train_inbreast_fold(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_dicom_pil,
         num_classes=num_classes,
         epochs=epochs,
@@ -340,6 +390,7 @@ def train_inbreast_holdout(
     return train_from_dataframes(
         train_df=train_df,
         val_df=val_df,
+        test_df=None,
         image_loader=load_dicom_pil,
         num_classes=num_classes,
         epochs=epochs,
@@ -391,3 +442,83 @@ def train_transfer_breakhis_to_inbreast(
 
 def build_inbreast_baseline_csv(*args, **kwargs):
     return build_inbreast_csv(*args, **kwargs)
+
+
+def train_bracs_baseline(
+    dataset_path,
+    epochs=10,
+    batch_size=16,
+    lr=1e-4,
+    device=DEVICE,
+    run_dirs=None,
+    img_size=224,
+    balance=True,
+    use_moderate_augmentation=True,
+    epoch_size_multiplier=1.25,
+):
+    train_df, val_df, test_df, class_names = build_bracs_dataframes(dataset_path)
+    del class_names
+    train_transform = build_histology_moderate_train_transform(img_size) if use_moderate_augmentation else None
+    eval_transform = build_eval_transform(img_size)
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_loader=load_rgb_pil,
+        num_classes=int(train_df["label"].nunique()),
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        model_name="seconformer_bracs.pt",
+        train_transform=train_transform,
+        eval_transform=eval_transform,
+        epoch_size_multiplier=epoch_size_multiplier,
+    )
+
+
+def train_bach_baseline(
+    dataset_path,
+    val_fraction=0.15,
+    test_fraction=0.15,
+    seed=42,
+    epochs=10,
+    batch_size=16,
+    lr=1e-4,
+    device=DEVICE,
+    run_dirs=None,
+    img_size=224,
+    balance=True,
+    use_strong_augmentation=True,
+    epoch_size_multiplier=2.0,
+):
+    train_df, val_df, test_df, class_names = build_bach_dataframes(
+        dataset_path,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+    )
+    del class_names
+    train_transform = build_histology_strong_train_transform(img_size) if use_strong_augmentation else None
+    eval_transform = build_eval_transform(img_size)
+    return train_from_dataframes(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_loader=load_rgb_pil,
+        num_classes=int(train_df["label"].nunique()),
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+        run_dirs=run_dirs,
+        img_size=img_size,
+        balance=balance,
+        model_name="seconformer_bach.pt",
+        train_transform=train_transform,
+        eval_transform=eval_transform,
+        epoch_size_multiplier=epoch_size_multiplier,
+    )

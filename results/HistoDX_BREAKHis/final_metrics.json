@@ -1,6 +1,6 @@
 {
   "model": "HistoDX",
-  "scenario": "Histologia",
+  "scenario": "BREAKHis",
   "epochs": 100,
   "accuracy": 0.9394,
   "precision": 0.9728,

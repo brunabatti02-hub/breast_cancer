@@ -46,6 +46,68 @@ def build_train_transform(img_size=224):
     ])
 
 
+def build_histology_moderate_train_transform(img_size=224):
+    return T.Compose([
+        T.RandomResizedCrop(img_size, scale=(0.85, 1.0), ratio=(0.95, 1.05)),
+        T.RandomHorizontalFlip(),
+        T.RandomVerticalFlip(p=0.3),
+        T.RandomRotation(15),
+        T.RandomAffine(
+            degrees=0,
+            translate=(0.05, 0.05),
+            scale=(0.95, 1.05),
+            shear=8,
+        ),
+        T.ColorJitter(
+            brightness=0.12,
+            contrast=0.12,
+            saturation=0.10,
+            hue=0.02,
+        ),
+        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))], p=0.15),
+        T.ToTensor(),
+        T.Normalize([0.5] * 3, [0.5] * 3),
+        T.RandomErasing(
+            p=0.15,
+            scale=(0.02, 0.08),
+            ratio=(0.5, 2.0),
+            value="random",
+        ),
+    ])
+
+
+def build_histology_strong_train_transform(img_size=224):
+    return T.Compose([
+        T.RandomResizedCrop(img_size, scale=(0.75, 1.0), ratio=(0.9, 1.1)),
+        T.RandomHorizontalFlip(),
+        T.RandomVerticalFlip(p=0.5),
+        T.RandomRotation(25),
+        T.RandomAffine(
+            degrees=0,
+            translate=(0.08, 0.08),
+            scale=(0.9, 1.1),
+            shear=12,
+        ),
+        T.ColorJitter(
+            brightness=0.20,
+            contrast=0.20,
+            saturation=0.15,
+            hue=0.03,
+        ),
+        T.RandomAutocontrast(p=0.3),
+        T.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
+        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))], p=0.2),
+        T.ToTensor(),
+        T.Normalize([0.5] * 3, [0.5] * 3),
+        T.RandomErasing(
+            p=0.25,
+            scale=(0.02, 0.10),
+            ratio=(0.3, 3.3),
+            value="random",
+        ),
+    ])
+
+
 def build_eval_transform(img_size=224):
     return T.Compose([
         T.Resize((img_size, img_size)),
@@ -85,10 +147,20 @@ def load_dicom_pil(dicom_path: str) -> Image.Image:
 
 
 class ImageClassificationDataset(Dataset):
-    def __init__(self, dataframe: pd.DataFrame, image_loader: Callable[[str], Image.Image], train=True, img_size=224):
+    def __init__(
+        self,
+        dataframe: pd.DataFrame,
+        image_loader: Callable[[str], Image.Image],
+        train=True,
+        img_size=224,
+        transforms_override=None,
+    ):
         self.df = dataframe.reset_index(drop=True).copy()
         self.image_loader = image_loader
-        self.transforms = build_train_transform(img_size) if train else build_eval_transform(img_size)
+        if transforms_override is not None:
+            self.transforms = transforms_override
+        else:
+            self.transforms = build_train_transform(img_size) if train else build_eval_transform(img_size)
 
     def __len__(self):
         return len(self.df)

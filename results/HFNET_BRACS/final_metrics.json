@@ -1,0 +1,15 @@
+{
+  "model": "HFTNet",
+  "scenario": "BRACS",
+  "epochs": 100,
+  "accuracy": 0.8723,
+  "precision": 0.9186,
+  "recall": 0.8614,
+  "f1_score": 0.8891,
+  "auc": 0.9398,
+  "accuracy_pct": 87.23,
+  "precision_pct": 91.86,
+  "recall_pct": 86.14,
+  "f1_score_pct": 88.91,
+  "auc_pct": 93.98
+}

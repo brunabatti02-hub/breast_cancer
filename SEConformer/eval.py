@@ -18,6 +18,21 @@ from sklearn.preprocessing import label_binarize
 from .io_utils import save_fig, save_metrics
 
 
+def _safe_auc_binary(y_true, positive_prob):
+    try:
+        return float(roc_auc_score(y_true, positive_prob))
+    except ValueError:
+        return 0.0
+
+
+def _safe_auc_multiclass(y_true, y_prob, num_classes):
+    try:
+        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+        return float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr"))
+    except ValueError:
+        return 0.0
+
+
 def evaluate(model, loader, device, num_classes=2, plot=True, save_dir=None, prefix="val", out_dir=None):
     model.eval()
 
@@ -44,7 +59,7 @@ def evaluate(model, loader, device, num_classes=2, plot=True, save_dir=None, pre
 
     if num_classes == 2:
         positive_prob = y_prob[:, 1]
-        cm = confusion_matrix(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
         tn, fp, fn, tp = cm.ravel()
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
 
@@ -53,17 +68,16 @@ def evaluate(model, loader, device, num_classes=2, plot=True, save_dir=None, pre
             "recall": float(recall_score(y_true, y_pred, zero_division=0)),
             "specificity": float(specificity),
             "f1_score": float(f1_score(y_true, y_pred, zero_division=0)),
-            "auc": float(roc_auc_score(y_true, positive_prob)),
+            "auc": _safe_auc_binary(y_true, positive_prob),
         })
     else:
-        y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
         metrics.update({
             "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
             "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
             "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
-            "auc_macro_ovr": float(roc_auc_score(y_true_bin, y_prob, average="macro", multi_class="ovr")),
+            "auc_macro_ovr": _safe_auc_multiclass(y_true, y_prob, num_classes),
         })
-        cm = confusion_matrix(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
 
     print("RESULTADOS:")
     for key, value in metrics.items():

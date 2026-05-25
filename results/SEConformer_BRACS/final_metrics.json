@@ -1,0 +1,17 @@
+{
+  "model": "SEConformer",
+  "scenario": "BRACS",
+  "epochs": 100,
+  "accuracy": 0.8621,
+  "precision": 0.9084,
+  "recall": 0.8473,
+  "f1_score": 0.8768,
+  "auc": 0.9315,
+  "accuracy_pct": 86.21,
+  "precision_pct": 90.84,
+  "recall_pct": 84.73,
+  "f1_score_pct": 87.68,
+  "auc_pct": 93.15,
+  "specificity": 0.9186,
+  "specificity_pct": 91.86
+}

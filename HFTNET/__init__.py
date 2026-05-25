@@ -12,6 +12,8 @@ from .data import (
 from .io_utils import find_best_previous_run, make_run_dirs, save_fig, save_metrics
 from .model import HFTNet
 from .train import (
+    run_bach_baseline,
+    run_bracs_baseline,
     run_breakhis_baseline_fold,
     run_breakhis_baseline_holdout,
     run_inbreast_baseline_fold,
