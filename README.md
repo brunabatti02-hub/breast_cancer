@@ -192,6 +192,295 @@ Implementação híbrida baseada em fusão de múltiplos backbones via `timm`, i
 
 Baseline baseada em `EfficientNetV2-S` via `torchvision`, usada como referência forte para tarefas binárias e multiclasses.
 
+## Diferenças Detalhadas Entre Implementações e Papers
+
+Leitura correta:
+
+- os modelos do repositório são inspirados pelos artigos, mas não devem ser tratados como reproduções fiéis linha a linha;
+- em vários pontos o código simplifica a arquitetura, muda o dataset-alvo ou amplia o escopo do paper original;
+- por isso, diferenças de métrica em relação aos artigos são esperadas e tecnicamente justificáveis.
+
+### SEConformer vs. paper
+
+O que o paper propõe em alto nível:
+
+- um modelo para histopatologia com blocos residuais `Squeeze-and-Excitation`;
+- uma etapa `Conformer` para modelar dependências mais globais;
+- avaliação centrada em histopatologia, com menções a `BreaKHis`, `BACH`, resultados por magnificação e estudos de ablação.
+
+O que o código deste repositório implementa:
+
+- três blocos convolucionais residuais com `SE` em `SEConformer/model.py`;
+- canais fixos `32 -> 64 -> 128`;
+- `AdaptiveAvgPool2d((8, 8))`, flatten completo e projeção linear para `256`;
+- um único bloco chamado `ConformerBlock` com `MultiheadAttention` de `4` cabeças e MLP simples;
+- classificador final com apenas uma camada linear.
+
+Diferenças arquiteturais importantes:
+
+1. O paper posiciona o `SE-Conformer` como arquitetura própria de detecção/classificação em histopatologia, enquanto o código atual é uma versão bem mais enxuta e experimental.
+2. No código só existem `3` blocos convolucionais principais antes da atenção. Isso é muito menor do que o tipo de pipeline profundo normalmente descrito em papers dessa família.
+3. A parte `Conformer` do código não recebe uma sequência rica de patches ou tokens espaciais. Depois do flatten, o vetor é convertido em sequência com `x.unsqueeze(1)`, ou seja, sequência de comprimento `1`.
+4. Com comprimento de sequência `1`, o `MultiheadAttention` não modela relações entre múltiplos tokens espaciais; ele funciona mais como transformação residual de um único embedding global.
+5. O classificador do código é compacto quando comparado ao que se espera de uma arquitetura publicada como contribuição central de paper. Com a ideia de ser mais rápido para treino e teste, sem perder a essência do paper e mantendo um resultado condizente. 
+
+Diferenças de pipeline e protocolo:
+
+1. O paper está claramente focado em histopatologia, enquanto o repositório estende o modelo para `INBreast` e até para transferência `BreaKHis -> INBreast`.
+2. Essa transferência entre histologia e mamografia é uma extensão do repositório, não uma reprodução direta do escopo principal do artigo.
+3. O código mistura cenários com `holdout`, `StratifiedKFold`, treino em `BACH`, `BRACS`, `BreaKHis` e `INBreast`, enquanto o paper destaca especialmente resultados em histopatologia e estudos de ablação.
+4. No repositório, `BreaKHis` pode ser binário ou multiclasse dependendo do CSV e do experimento; isso também altera a comparabilidade com o artigo.
+5. O pré-processamento do `INBreast` converte `DICOM` para RGB de 3 canais e redimensiona para `224 x 224`, o que é um pipeline adicional que não faz parte do problema original de histopatologia do paper.
+6. O treino do repositório usa `Adam`, `WeightedRandomSampler`, augmentations relativamente simples e seleção de melhor época por `accuracy` ou `f1_macro`.
+7. O paper cita ablação e comparação metodológica mais controlada; o código aqui prioriza reuso experimental e consistência entre diferentes datasets.
+
+Conclusão prática sobre o `SEConformer`:
+
+- o modelo do repositório é melhor entendido como uma implementação inspirada no paper;
+- ele preserva a ideia de combinar `SE` com uma etapa de atenção;
+- mas a etapa conformer foi simplificada e o escopo experimental foi ampliado além do artigo.
+
+### HFTNet vs. paper
+
+O que o paper propõe em alto nível:
+
+- uma arquitetura híbrida de fusão entre CNNs e transformers;
+- exploração explícita de características locais e globais;
+- uso de múltiplos datasets de câncer de mama, incluindo `BreaKHis`, `BACH` e `BRACS`;
+- uma etapa de fusão descrita no paper como núcleo da contribuição metodológica.
+
+O que o código deste repositório implementa:
+
+- cinco backbones do `timm`: `DenseNet201`, `Xception`, `ViT`, `DeiT` e `Swin Tiny`;
+- extração independente de features globais de cada backbone;
+- projeção linear de cada saída para dimensão `768`;
+- concatenação das `5` features, compressão por `Linear(5 * 768 -> 768)`;
+- um bloco de `MultiheadAttention` com `16` cabeças;
+- um `FFN` simples e um classificador `768 -> 512 -> num_classes`.
+
+Diferenças arquiteturais importantes:
+
+1. O paper apresenta o `HFT-Net` como uma arquitetura de fusão transformer própria, enquanto o repositório monta essa ideia com backbones prontos do `timm`.
+2. Em vez de uma implementação dedicada do bloco de fusão do artigo, o código usa uma estratégia direta de `extrai -> projeta -> concatena -> comprime`.
+3. Isso quer dizer que o `MultiheadAttention` atual não está fazendo atenção entre múltiplas fontes como tokens independentes;
+4. O paper enfatiza a complementaridade entre informações locais e globais; o código preserva essa ideia apenas de forma indireta, porque cada backbone já entrega uma feature global pooled.
+
+Diferenças de pipeline e protocolo:
+
+1. O código usa `ImageNet pretraining` via `timm` em boa parte dos cenários, mas desliga `pretrained` em alguns experimentos como `BACH` e `BRACS`.
+2. O treino usa `AdamW` com `StepLR`, `WeightedRandomSampler` e augmentations genéricas, o que pode divergir bastante da configuração fina do artigo.
+3. O critério de melhor modelo no código é `val_acc`, mesmo em cenários multiclasses; um paper pode priorizar outra métrica.
+
+Conclusão prática sobre o `HFTNet`:
+
+- esta implementação mantém a intuição do paper de combinar backbones CNN e transformer;
+- porém a fusão foi reduzida a uma composição mais simples com módulos prontos;
+- o resultado é uma baseline híbrida forte, mas não uma reconstrução fiel do bloco de fusão transformer descrito no artigo.
+
+### HistoDX vs. paper
+
+
+O que o paper propõe em alto nível:
+
+- um sistema `HistoDX` focado em diagnóstico por imagem histopatológica;
+- foco explícito em `invasive ductal carcinoma (IDC)`;
+- uso principal de `EfficientNetV2-B3` segundo os metadados e trechos extraídos do PDF;
+- validação complementar em `BreaKHis` e `BACH` para discutir generalização multi-dataset.
+
+O que o código deste repositório implementa:
+
+- uma baseline baseada em `EfficientNetV2-S` do `torchvision`;
+- substituição apenas da última camada classificadora;
+- um pipeline único de treino para histopatologia e mamografia;
+- cenários adicionais em `BRACS`, `INBreast` e transferência entre domínios.
+
+Diferenças arquiteturais importantes:
+
+1. O paper menciona `EfficientNetV2-B3`, enquanto o código usa `EfficientNetV2-S`.
+2. Essa troca já altera capacidade, número de parâmetros, custo computacional e comportamento de generalização.
+3. Isso faz desta pasta muito mais uma baseline inspirada no paper do que uma cópia estrita da arquitetura publicada.
+4. A escolha por `EfficientNetV2-S` parece motivada por disponibilidade estável no `torchvision`, não por fidelidade absoluta ao artigo.
+
+Diferenças de treino e avaliação:
+
+1. O repositório usa splits `train/val/test` e `holdout` definidos no próprio código, enquanto o artigo está ancorado em uma validação principal sobre `IDC` com validação complementar multi-dataset.
+2. O código usa `Adam` simples, sem scheduler explícito.
+3. A seleção do melhor modelo não é feita por um pipeline complexo de early stopping ou tuning avançado.
+4. O tratamento de desequilíbrio usa `WeightedRandomSampler` e pesos de classe derivados do `train_df`.
+5. Caso o paper use procedimentos adicionais de interpretação, explicabilidade ou análise clínica, eles são implementados.
+
+Conclusão prática sobre o `HistoDX`:
+
+- a implementação atual é uma baseline forte e útil;
+- mas ela representa um `EfficientNetV2-S` adaptado ao projeto, não a versão exata `HistoDX` do paper;
+- por isso os resultados daqui devem ser comparados aos do artigo apenas como aproximação experimental.
+
+### Resumo Executivo Das Diferenças
+
+Se for preciso resumir em uma frase por modelo:
+
+- `SEConformer`: mantém a ideia `SE + atenção`, mas o bloco conformer do código é mais simples do que o paper sugere e opera sobre um único token global.
+- `HFTNet`: preserva a noção de fusão entre CNNs e transformers, mas implementa isso como ensemble híbrido com concatenação e atenção o token.
+- `HistoDX`: funciona como baseline `EfficientNetV2-S` inspirada no paper, enquanto o artigo aponta para uma formulação centrada em `EfficientNetV2-B3` e no dataset `IDC`.
+
+Portanto, os nomes das pastas seguem os artigos, mas as implementações do repositório devem ser lidas como:
+
+- reproduções parciais;
+- simplificações pragmáticas para fins experimentais;
+- extensões de escopo para novos datasets e cenários de transferência.
+
+### Diferenças Entre Modelos Em Cada Dataset
+
+Além das diferenças em relação aos papers, há uma segunda camada importante de diferença: os modelos não tratam todos os datasets exatamente do mesmo jeito.
+
+Isso importa porque muda:
+
+- o número de classes;
+- o tipo de problema (`binário` vs `multiclasse`);
+- as métricas disponíveis;
+- a dificuldade real do experimento;
+- o quão justa é a comparação direta entre dois resultados.
+
+#### Visão rápida por dataset
+
+| Dataset | Classes naturais do dataset | SEConformer | HFTNet | HistoDX | Impacto prático |
+| --- | --- | --- | --- | --- | --- |
+| `BreaKHis` | `2` classes binárias ou `8` subtipos | suporta `2` e `8` classes | suporta `2` e `8`, mas o fluxo principal está orientado a `8` classes | implementado no repositório apenas para `2` classes | nem sempre os três modelos estão resolvendo exatamente o mesmo problema |
+| `INBreast` | `2` classes derivadas de `BI-RADS` ou `6` classes `BI-RADS 1-6` | suporta binário e multiclasse | suporta binário e multiclasse, com padrão mais orientado a multiclasse | baseline principal do repositório usa multiclasse, embora a base suporte binário | comparar resultados exige saber qual CSV e qual codificação de rótulo foram usados |
+| `BACH` | `4` classes | `4` classes | `4` classes | `4` classes | aqui a comparação é mais direta entre arquiteturas |
+| `BRACS` | `7` classes | `7` classes | `7` classes | `7` classes | aqui a comparação também é mais direta, embora o protocolo ainda varie por modelo |
+
+#### BreaKHis
+
+O `BreaKHis` é o dataset onde a diferença entre modelos mais muda o significado da tarefa.
+
+- o dataset permite leitura binária: `benign` vs `malignant`;
+- também permite leitura multiclasse por subtipo histológico, com `8` classes;
+- portanto, dois resultados em `BreaKHis` podem parecer comparáveis no nome do cenário, mas na prática podem estar resolvendo problemas diferentes.
+
+Como cada modelo trata o `BreaKHis`:
+
+1. `SEConformer`
+- o código suporta tanto `mode="binary"` quanto modo multiclasse em `build_breakhis_dataframe`;
+- o baseline principal de notebook do repositório para `BreaKHis` está configurado em `mode="binary"`;
+- o arquivo versionado `SEConformer/breakhis_binary_folds.csv` também aponta para esse uso binário.
+
+2. `HFTNet`
+- o parser suporta binário e multiclasse;
+- porém o fluxo principal de `run_breakhis_baseline_holdout` usa `mode="multiclass"` por padrão;
+- o próprio `HFTNet` nasce com `num_classes=8` no `model.py`;
+- os notebooks principais de `BreaKHis` e de transferência também estão alinhados com a leitura multiclasse de `8` subtipos.
+
+3. `HistoDX`
+- no repositório, `collect_breakhis_images` foi implementado apenas para `mode="binary"`;
+- portanto o baseline `HistoDX` em `BreaKHis` aqui é exclusivamente `2` classes.
+
+Consequência prática em `BreaKHis`:
+
+- `SEConformer` e `HistoDX` podem estar sendo comparados em binário;
+- `HFTNet` pode estar sendo avaliado em um problema multiclasse de `8` classes;
+- então, sem verificar o CSV ou o notebook exato usado em cada execução, uma comparação direta de `accuracy` entre os três pode ser injusta.
+
+#### INBreast
+
+O `INBreast` também muda bastante de significado conforme a codificação dos rótulos.
+
+- o repositório suporta forma binária com limiar `BI-RADS >= 4` como classe positiva;
+- também suporta forma multiclasse com `6` classes, correspondendo a `BI-RADS 1` até `BI-RADS 6`;
+- isso altera não só a dificuldade, mas a própria interpretação clínica do problema.
+
+Como cada modelo trata o `INBreast`:
+
+1. `SEConformer`
+- `build_inbreast_csv` em `SEConformer/data.py` tem `mode="binary"` por padrão;
+- porém os notebooks principais de baseline em `INBreast` usam a geração do CSV em modo multiclasse;
+- logo, o código suporta os dois cenários, mas o analisado foi o multiclasse.
+
+#### BACH
+
+No `BACH`, a comparação entre modelos fica mais limpa porque todos trabalham essencialmente sobre a mesma estrutura de rótulos.
+
+- o dataset é tratado como problema de `4` classes;
+- as classes naturais da pasta local são `Normal`, `Benign`, `InSitu` e `Invasive`;
+
+Mesmo assim, ainda existem diferenças de protocolo:
+
+1. `SEConformer`
+- usa augmentação mais forte para `BACH`;
+- usa `epoch_size_multiplier=2.0`, o que aumenta a amostragem efetiva por época;
+- continua com seleção de melhor época pelo score apropriado.
+
+2. `HFTNet`
+- usa `pretrained=False` no baseline de `BACH`;
+- treina a arquitetura híbrida inteira para `4` classes;
+- continua com `AdamW + StepLR`.
+
+3. `HistoDX`
+- também usa `pretrained=False` no baseline de `BACH`;
+- adapta `EfficientNetV2-S` para `4` classes.
+
+Consequência prática em `BACH`:
+
+- aqui a diferença principal não é o número de classes entre modelos;
+- a diferença principal é arquitetura, augmentação e estratégia de treino.
+
+#### BRACS
+
+No `BRACS`, os três modelos estão mais alinhados em termos de rótulo final.
+
+- o dataset local está organizado em `7` classes;
+- as pastas são `0_N`, `1_PB`, `2_UDH`, `3_FEA`, `4_ADH`, `5_DCIS` e `6_IC`;
+- os três pipelines consomem essa estrutura como problema multiclasse de `7` classes.
+
+Diferenças entre modelos em `BRACS`:
+
+1. `SEConformer`
+- usa augmentação moderada;
+- usa `epoch_size_multiplier=1.25`;
+- otimiza com foco em score multiclasse.
+
+2. `HFTNet`
+- usa `pretrained=False` no baseline `BRACS`;
+- mantém a fusão entre cinco backbones mesmo num dataset relativamente menor.
+
+3. `HistoDX`
+- também entra como `pretrained=False` em `BRACS`;
+- funciona como baseline monolítica de backbone único para `7` classes.
+
+Consequência prática em `BRACS`:
+
+- aqui os três modelos estão, em princípio, resolvendo o mesmo problema de `7` classes;
+- por isso, `BRACS` é um dos cenários mais apropriados para comparação arquitetural direta entre eles.
+
+#### Efeito direto nas métricas
+
+As diferenças de dataset e de número de classes alteram também o tipo de métrica calculada.
+
+1. Em cenários binários:
+- aparecem métricas como `specificity`, `ROC`, `precision-recall` binária e `AUC` binária;
+- no `SEConformer` e no `HFTNet`, a lógica de avaliação separa explicitamente binário de multiclasse;
+- o `HistoDX` calcula `roc_auc` binária no caso binário, mas não calcula `specificity` da mesma forma que o `SEConformer`.
+
+2. Em cenários multiclasses:
+- as métricas passam para `precision_macro`, `recall_macro`, `f1_macro` e `auc_macro_ovr`;
+- essas métricas geralmente são mais severas e menos diretamente comparáveis com uma `accuracy` binária simples;
+- portanto, um `92%` em binário não significa a mesma coisa que um `92%` em `8` classes.
+
+#### Implicação para ler a tabela de resultados
+
+A tabela consolidada de resultados deste repositório deve ser lida com esta cautela:
+
+- `BACH` e `BRACS` são os cenários mais homogêneos para comparar arquiteturas;
+- `BreaKHis` pode mudar bastante de dificuldade dependendo de estar em `2` ou `8` classes;
+- `INBreast` pode mudar de problema binário para problema `BI-RADS` multiclasse de `6` classes;
+- transferência `BreaKHis -> INBreast` adiciona, além da mudança de domínio, uma possível mudança no espaço de rótulos.
+
+Em outras palavras:
+
+- quando muda o dataset, muda o domínio visual;
+- quando muda o número de classes, muda a própria tarefa;
+- e, em alguns casos deste repositório, mudam as duas coisas ao mesmo tempo.
+
 ## Dependências Principais
 
 As implementações usam principalmente:
