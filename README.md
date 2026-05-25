@@ -1,201 +1,271 @@
 # Breast Cancer Experiments
 
-Repositório de experimentos para classificação de imagens médicas relacionadas ao câncer de mama, com foco em:
+Repositório de experimentos em classificação de imagens médicas relacionadas ao câncer de mama, com foco em três arquiteturas:
 
-- classificação histopatológica no dataset `BreaKHis`;
-- classificação mamográfica no dataset `INBreast`;
-- transferência de aprendizado entre domínios de histologia e mamografia;
-- comparação entre diferentes arquiteturas profundas, incluindo `SEConformer`, `HFTNet` e `HistoDX`.
+- `SEConformer`
+- `HFTNet`
+- `HistoDX`
+
+O projeto reúne baselines em histopatologia e mamografia, além de um cenário de transferência de aprendizado entre `BreaKHis` e `INBreast`.
 
 ## Objetivo
 
-Este projeto organiza experimentos de aprendizado profundo voltados à análise de câncer de mama em dois domínios distintos:
+Este repositório foi organizado para comparar diferentes estratégias de aprendizado profundo em cenários de:
 
-- `Histologia`: imagens microscópicas de tecido tumoral mamário;
-- `Mamografia`: imagens de mamografia digital com rótulos clínicos baseados em `BI-RADS`.
+- classificação histopatológica no `BreaKHis`;
+- classificação histopatológica nos datasets `BACH` e `BRACS`;
+- classificação mamográfica no `INBreast`;
+- transferência de aprendizado de histologia para mamografia.
 
-A proposta central é investigar o desempenho de modelos no domínio de origem e avaliar, em especial, a viabilidade de reutilização de representações aprendidas em cenários de transferência de aprendizado entre domínios médicos visualmente distintos.
+Mais do que reproduzir um único paper, a proposta aqui é manter uma base experimental comparável, com código modular, notebooks e resultados salvos em disco.
 
-## Datasets Utilizados
+## Estrutura Atual do Repositório
 
-### 1. BreaKHis
+```text
+breast_cancer/
+|- HFTNET/
+|- HISTODX/
+|- SEConformer/
+|- results/
+`- README.md
+```
 
-O `BreaKHis` é um dataset de imagens histopatológicas de câncer de mama amplamente utilizado em tarefas de classificação.
+### Pastas principais
 
-Principais características:
+- `SEConformer/`: implementação modular do SEConformer, notebooks e arquivos auxiliares.
+- `HFTNET/`: implementação do HFTNet, notebooks e utilitários de treino.
+- `HISTODX/`: baseline HistoDX em PyTorch.
+- `results/`: métricas finais e artefatos de execução.
 
-- `7.909` imagens microscópicas;
-- `82` pacientes;
-- `2.480` imagens benignas;
-- `5.429` imagens malignas;
-- fatores de ampliação: `40X`, `100X`, `200X` e `400X`;
-- resolução original de `700 x 460` pixels;
-- imagens `RGB` com `3 canais`;
-- profundidade de `8 bits` por canal;
-- formato `PNG`.
+### Arquivos de resultado já presentes
 
-Distribuição por ampliação:
+- `results/summary_metrics.csv`: tabela consolidada de métricas.
+- `results/*/final_metrics.json`: métricas finais por experimento.
 
-- `40X`: `1.995` imagens;
-- `100X`: `2.081` imagens;
-- `200X`: `2.013` imagens;
-- `400X`: `1.820` imagens.
+### Artigos incluídos no repositório
 
-Estrutura local no projeto:
+- `SEConformer/Advancing_Breast_Cancer_Detection_SE-Conformer_Framework_for_Malignancy_Detection_in_Histopathology_Images.pdf`
+- `HFTNET/HFT-Net_Hybrid_Fusion_Transformer_Network_for_Mult.pdf`
+- `HISTODX/HistoDX_Revolutionizing_Breast_Cancer_Diagnosis_Through_Advanced_Imaging_Techniques.pdf`
 
-- `BrestCancer Datasets/BreaKHis/`
+## Datasets Considerados
 
-Link de download:
+### BreaKHis
 
-- `https://www.kaggle.com/datasets/ambarish/breakhis`
+Dataset histopatológico amplamente usado em classificação de câncer de mama.
 
-Referência acadêmica:
+- `7.909` imagens
+- `82` pacientes
+- classes benignas e malignas
+- ampliações de `40X`, `100X`, `200X` e `400X`
 
-- Spanhol, F. A., Oliveira, L. S., Petitjean, C., Heutte, L. "A Dataset for Breast Cancer Histopathological Image Classification."
+No código deste repositório ele aparece em dois formatos:
 
-### 2. INBreast
+- binário (`benign` vs `malignant`)
+- multiclasse por subtipo histológico, dependendo do modelo
 
-O `INBreast` é um conjunto de mamografias digitais de campo total, utilizado neste projeto para classificação no domínio mamográfico.
+### INBreast
 
-Principais características:
+Dataset de mamografias digitais com anotações clínicas e rótulos derivados de `BI-RADS`.
 
-- `115` casos;
-- `410` imagens;
-- `90` casos com `4 imagens por exame`;
-- `25` casos de pacientes submetidas à mastectomia, com `2 imagens por exame`;
-- presença de anotações especializadas em `XML`;
-- inclusão de diferentes achados, como:
-  - massas;
-  - calcificações;
-  - assimetrias;
-  - distorções.
+- `410` imagens
+- `115` casos
+- dados originalmente em `DICOM`
 
-No projeto, o dataset é utilizado em formulações associadas à escala `BI-RADS`, com foco em classificação multiclasse.
+Nos experimentos daqui, as imagens são convertidas para 3 canais e redimensionadas para entrada de rede.
 
-Estrutura local relacionada:
+### BACH e BRACS
 
-- `INbreast_Folds.csv`
-- rotinas de leitura e preparação dentro dos módulos dos modelos
+Foram usados como baselines adicionais em histopatologia para medir generalização entre arquiteturas em outros conjuntos de tecido mamário.
 
-Link de download:
+### Links úteis dos dados
 
-- `https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset`
+- `BreaKHis`: <https://www.kaggle.com/datasets/ambarish/breakhis>
+- `INBreast`: <https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset>
 
-Referência acadêmica:
+## Modelos Implementados
 
-- Moreira, I. C., Amaral, I., Domingues, I., Cardoso, A., Cardoso, M. J., Cardoso, J. S. "INbreast: Toward a Full-field Digital Mammographic Database."
+### SEConformer
 
-## Modelos e Experimentos
+Implementação própria com blocos convolucionais residuais com `Squeeze-and-Excitation`, seguidos de um bloco de atenção do tipo conformer simplificado.
 
-Os principais experimentos do repositório estão organizados em torno dos seguintes modelos:
+### HFTNet
 
-- `SEConformer`: arquitetura híbrida baseada em convolução, recalibração de canais e atenção;
-- `SEConformer_TL`: configuração experimental voltada à transferência de aprendizado para o domínio mamográfico;
-- `HFTNET`: arquitetura de fusão heterogênea de múltiplos extratores profundos;
-- `HISTODX`: baseline baseada em backbone moderno para classificação histopatológica;
-- `HISTODX_TORCH`: variante experimental em PyTorch;
-- `SqueezeNet_SVM`: experimento adicional com abordagem híbrida.
+Implementação híbrida baseada em fusão de múltiplos backbones via `timm`, incluindo:
 
-## Organização do Repositório
+- `DenseNet201`
+- `Xception`
+- `ViT`
+- `DeiT`
+- `Swin Transformer`
 
-### Diretórios principais
+### HistoDX
 
-- `SEConformer/`: implementação modular do modelo SEConformer;
-- `SEConformer_TL/`: rotinas de transferência de aprendizado com pesos previamente treinados;
-- `HFTNET/`: implementação do HFTNet;
-- `HISTODX/`: implementação da baseline HistoDX;
-- `HISTODX_TORCH/`: variante da baseline em PyTorch;
-- `SqueezeNet_SVM/`: experimentos complementares;
-- `results/`: métricas, históricos, modelos salvos e gráficos gerados;
-- `BrestCancer Datasets/`: armazenamento local dos datasets;
-- `.ipynb_checkpoints/`: checkpoints automáticos de notebooks.
+Baseline baseada em `EfficientNetV2-S` via `torchvision`, usada como referência forte para tarefas binárias e multiclasses.
 
-### Arquivos relevantes na raiz
+## Dependências Principais
 
-- `SEConformer.ipynb`: experimento do SEConformer;
-- `SEConformer_INBreast_DICOM.ipynb`: experimento no domínio mamográfico;
-- `SEConformer_TL_INBreast_DICOM.ipynb`: transferência de aprendizado para INBreast;
-- `HFT-Net completo.ipynb`: notebook do HFTNet;
-- `HistoDX.ipynb`: notebook do HistoDX;
-- `Folds.csv`, `Folds_HFT.csv`, `INbreast_Folds.csv`: divisões e particionamentos experimentais;
-- `seconformer_comparacao.tex`: comparação textual dos resultados do SEConformer;
-- `secao_transferencia_fapesp.tex`: seção em LaTeX sobre transferência entre domínios;
-- `secao_baselines_fapesp.tex`: seção em LaTeX com tabela resumida de resultados.
+As implementações usam principalmente:
 
-## Estrutura dos Módulos
+- `torch`
+- `torchvision`
+- `timm`
+- `pandas`
+- `numpy`
+- `scikit-learn`
+- `matplotlib`
+- `seaborn`
+- `Pillow`
+- `pydicom` para `INBreast`
 
-Nas implementações modulares, a organização tende a seguir o padrão:
+Observação importante:
 
-- `config.py`: hiperparâmetros e configurações gerais;
-- `data.py`: leitura, parsing, transformações e particionamento dos dados;
-- `model.py`: definição das arquiteturas;
-- `train.py`: treinamento e, em alguns casos, rotinas de transferência;
-- `eval.py`: avaliação e métricas;
-- `io_utils.py`: persistência de resultados e organização de diretórios de execução.
+- alguns scripts de treino para `BACH` e `BRACS` importam um módulo auxiliar chamado `histology_datasets`, que não está versionado neste repositório. Os notebooks e os resultados já gerados continuam úteis, mas a reprodução exata desses cenários pode exigir esse módulo externo.
 
-## Resultados Gerados
+## Notebooks
 
-As execuções costumam salvar artefatos em `results/`, incluindo:
+Os notebooks principais estão organizados dentro de cada pasta de modelo, por exemplo:
 
-- `final_metrics.json`;
-- `history.csv`;
-- pesos dos modelos treinados;
-- curvas de treinamento;
-- matrizes de confusão;
-- curvas ROC e gráficos auxiliares.
+- `SEConformer/notebooks/`
+- `HFTNET/notebooks/`
+- `HISTODX/notebooks/`
 
-Exemplos já presentes no repositório:
+Eles funcionam como ponto de entrada mais prático para reproduzir os experimentos já executados no projeto.
 
-- `results/SEConformer/...`
-- `results/SEConformer_TL/...`
+## Resultados Consolidados
 
-## Fluxo Geral de Uso
+Os resultados abaixo foram extraídos de `results/summary_metrics.csv`.
 
-### 1. Baixar os datasets
+Observação:
 
-Baixe manualmente os datasets a partir dos links:
+- em cenários multiclasses, `precision`, `recall` e `F1` podem corresponder a médias macro, dependendo da implementação de cada modelo;
+- `specificity` aparece apenas quando foi calculada e salva no experimento correspondente.
 
-- `BreaKHis`: `https://www.kaggle.com/datasets/ambarish/breakhis`
-- `INBreast`: `https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset`
+| Modelo | Cenário | Accuracy | Precision | Recall | F1 | AUC | Specificity |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| HFTNet | BACH | 83.53 | 88.74 | 82.16 | 85.32 | 91.27 | - |
+| HFTNet | BRACS | 87.23 | 91.86 | 86.14 | 88.91 | 93.98 | - |
+| HFTNet | BreaKHis | 91.62 | 96.35 | 90.85 | 93.52 | 96.48 | - |
+| HistoDX | BreaKHis | 93.94 | 97.28 | 92.95 | 95.07 | 97.12 | - |
+| SEConformer | BACH | 91.12 | 95.68 | 89.61 | 92.55 | 96.54 | 95.12 |
+| SEConformer | BRACS | 86.21 | 90.84 | 84.73 | 87.68 | 93.15 | 91.86 |
+| SEConformer | BreaKHis | 92.79 | 98.57 | 90.58 | 94.41 | 98.69 | 97.30 |
+| SEConformer | Transferência BreaKHis -> INBreast | 62.32 | 61.80 | 60.45 | 61.12 | 74.83 | - |
 
-### 2. Organizar os arquivos localmente
+## Discussão dos Resultados
 
-Mantenha os dados em caminhos compatíveis com o projeto, especialmente dentro de:
+Os resultados mostram três comportamentos bem claros:
 
-- `BrestCancer Datasets/`
+1. No `BreaKHis`, todos os modelos tiveram desempenho forte, com destaque para `HistoDX` em `accuracy` (`93.94%`) e para `SEConformer` em `AUC` (`98.69%`) e `precision` (`98.57%`).
+2. Em `BACH` e `BRACS`, o desempenho continua bom, mas já aparece maior sensibilidade à arquitetura e ao protocolo de treino. O `SEConformer` foi melhor em `BACH`, enquanto o `HFTNet` ficou ligeiramente à frente em `BRACS`.
+3. A transferência de `BreaKHis` para `INBreast` foi, de longe, o cenário mais difícil. A `accuracy` caiu para `62.32%` e a `AUC` para `74.83%`, o que indica que as representações aprendidas em histologia não se adaptam automaticamente ao domínio mamográfico.
 
-Se necessário, ajuste os caminhos diretamente em:
+Em termos práticos, o repositório sugere que:
 
-- notebooks;
-- `config.py`;
-- scripts de treinamento.
+- baselines treinadas e avaliadas no mesmo domínio visual conseguem resultados competitivos;
+- a troca de dataset já altera bastante a hierarquia entre modelos;
+- transferência entre domínios médicos muito distintos exige cuidado extra e não deve ser tratada como adaptação simples.
 
-### 3. Executar os experimentos
+## Por Que Algumas Métricas Ficam Abaixo dos Papers?
 
-O repositório contém tanto notebooks quanto implementações modulares. Em geral, os experimentos podem ser conduzidos de duas formas:
+Essa diferença é esperada e, neste projeto, há várias razões técnicas plausíveis para isso.
 
-- execução pelos notebooks da raiz;
-- importação das rotinas presentes nas pastas dos modelos.
+### 1. As implementações daqui são reimplementações experimentais
 
-Exemplos de pontos de entrada:
+Os nomes dos modelos seguem os artigos, mas o código do repositório não é necessariamente uma reprodução exata da arquitetura, do pipeline de pré-processamento ou da rotina de otimização descrita nos papers.
 
-- `SEConformer.ipynb`
-- `SEConformer_INBreast_DICOM.ipynb`
-- `SEConformer_TL_INBreast_DICOM.ipynb`
-- `HFT-Net completo.ipynb`
-- `HistoDX.ipynb`
+Exemplos:
 
-## Observações Importantes
+- o `SEConformer` daqui é uma implementação enxuta e própria;
+- o `HFTNet` foi montado com backbones de `timm` e uma etapa de fusão customizada;
+- o `HistoDX` aqui funciona como baseline baseada em `EfficientNetV2-S`.
 
-- O nome da pasta `BrestCancer Datasets` foi mantido conforme está no workspace atual.
-- Os resultados de transferência entre domínios devem ser interpretados com cautela, pois histologia e mamografia apresentam forte diferença de escala, textura, semântica visual e estrutura de rótulos.
-- Parte dos relatórios em LaTeX do projeto já foi organizada para uso em documentação acadêmica e relatórios institucionais.
+Isso já basta para deslocar as métricas para cima ou para baixo em relação aos artigos originais.
 
-## Referências de Dados
+### 2. O protocolo experimental não é idêntico ao dos artigos
 
-- BreaKHis: `https://www.kaggle.com/datasets/ambarish/breakhis`
-- INBreast: `https://www.kaggle.com/datasets/ramanathansp20/inbreast-dataset`
+Neste repositório coexistem:
 
-## Status do Projeto
+- `holdout` aleatório;
+- `StratifiedKFold`;
+- separações `train/val/test` específicas para alguns datasets.
 
-O repositório reúne código experimental, notebooks, resultados intermediários e textos de apoio em LaTeX. Ele funciona como base de pesquisa para comparação entre arquiteturas e análise de transferência de aprendizado aplicada ao diagnóstico auxiliado por imagem em câncer de mama.
+Papers frequentemente reportam:
+
+- média de várias rodadas;
+- validação cruzada com protocolo fixo;
+- divisão por paciente;
+- seleção criteriosa de folds;
+- ensemble ou pós-processamento.
+
+Quando o protocolo muda, a comparação direta deixa de ser justa.
+
+### 3. Os datasets usados aqui são pequenos e sensíveis à partição
+
+Isso é especialmente importante em:
+
+- `INBreast`, que é pequeno para treino profundo;
+- `BACH` e `BRACS`, onde pequenas diferenças de split afetam bastante as métricas;
+- `BreaKHis`, que pode variar de dificuldade conforme o recorte usado.
+
+Em datasets pequenos, alguns pontos percentuais de diferença podem vir apenas da amostragem.
+
+### 4. O pré-processamento reduz informação importante
+
+No caso do `INBreast`, as imagens:
+
+- são originalmente `DICOM`;
+- passam por normalização;
+- são convertidas para 3 canais;
+- são redimensionadas para `224 x 224`.
+
+Esse passo simplifica o pipeline, mas pode remover detalhes finos de lesões, bordas e textura mamográfica que artigos mais fortes preservam com imagens em resolução maior, recortes por ROI ou pré-processamento clínico mais cuidadoso.
+
+### 5. Transferência entre histologia e mamografia tem grande gap de domínio
+
+`BreaKHis` e `INBreast` diferem em quase tudo:
+
+- escala espacial;
+- textura;
+- contraste;
+- semântica visual;
+- distribuição de classes;
+- tipo de rótulo.
+
+Além disso, no caso de transferência do `SEConformer`, parte do backbone pode ser congelada, o que reduz a capacidade de adaptação ao novo domínio. Então é natural que esse experimento fique bem abaixo dos números vistos em cenários intra-domínio.
+
+### 6. Treino, seleção de checkpoint e tuning são mais simples aqui
+
+Nos scripts atuais, a seleção do melhor modelo e os hiperparâmetros são razoavelmente diretos. Em muitos papers, os autores usam:
+
+- tuning mais agressivo;
+- políticas de learning rate mais refinadas;
+- augmentations específicas do domínio;
+- regularização calibrada por dataset;
+- treino repetido com escolha da melhor execução.
+
+Sem esse nível de ajuste, a tendência é ficar alguns pontos abaixo dos resultados publicados.
+
+## Leitura Correta dos Resultados
+
+Os números deste repositório devem ser interpretados como:
+
+- uma comparação interna entre implementações sob um pipeline consistente;
+- uma base experimental útil para análise acadêmica;
+- um ponto de partida para melhorias de protocolo e reprodução mais fiel dos artigos.
+
+Eles não devem ser apresentados como reprodução oficial ou fiel do estado da arte dos papers anexados sem deixar essa ressalva explícita.
+
+## Próximos Passos Recomendados
+
+Se o objetivo for aproximar mais os resultados dos artigos, os passos com maior impacto tendem a ser:
+
+1. reproduzir exatamente o protocolo de split de cada paper;
+2. alinhar pré-processamento e resolução de entrada;
+3. repetir experimentos com múltiplas seeds;
+4. separar avaliação por paciente quando aplicável;
+5. ajustar melhor fine-tuning e descongelamento no cenário de transferência.
+
+## Resumo
+
+O repositório está consistente como base de experimentação comparativa. Hoje, os melhores resultados aparecem nos cenários intra-domínio, enquanto a transferência `BreaKHis -> INBreast` confirma o alto custo do gap entre histologia e mamografia. As métricas menores que as dos papers fazem sentido técnico e refletem, principalmente, diferenças de implementação, protocolo experimental, tamanho dos datasets e pré-processamento.
