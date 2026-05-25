@@ -50,19 +50,45 @@ breast_cancer/
 
 ## Datasets Considerados
 
+Os dados locais usados nos experimentos deste repositório estão organizados em:
+
+```text
+C:\Users\franc\OneDrive\Desktop\Breast Cancer\BrestCancer Datasets
+```
+
+Observação importante:
+
+- alguns arquivos do projeto usam caminhos absolutos apontando para essa pasta;
+- em especial, `HFTNET/config.py`, `SEConformer/breakhis_binary_folds.csv` e `SEConformer/inbreast_birads_folds.csv` dependem dessa organização;
+- se os datasets forem movidos para outro local, esses caminhos precisam ser ajustados.
+
 ### BreaKHis
 
 Dataset histopatológico amplamente usado em classificação de câncer de mama.
 
 - `7.909` imagens
 - `82` pacientes
-- classes benignas e malignas
+- `2.480` imagens benignas e `5.429` malignas
 - ampliações de `40X`, `100X`, `200X` e `400X`
+- arquivo auxiliar `Folds.csv` com colunas `fold`, `mag`, `grp` e `filename`
 
 No código deste repositório ele aparece em dois formatos:
 
 - binário (`benign` vs `malignant`)
 - multiclasse por subtipo histológico, dependendo do modelo
+
+Estrutura local observada:
+
+```text
+BreaKHis/
+|- BreaKHis_v1/
+|  `- BreaKHis_v1/
+|     `- histology_slides/
+|        `- breast/
+|           |- benign/
+|           `- malignant/
+`- Folds.csv
+```
 
 ### INBreast
 
@@ -71,12 +97,75 @@ Dataset de mamografias digitais com anotações clínicas e rótulos derivados d
 - `410` imagens
 - `115` casos
 - dados originalmente em `DICOM`
+- `410` linhas em `INbreast.csv`
+- metadados auxiliares em `INbreast.xls`, `README.txt` e `inbreast.pdf`
 
 Nos experimentos daqui, as imagens são convertidas para 3 canais e redimensionadas para entrada de rede.
 
-### BACH e BRACS
+Estrutura local observada:
 
-Foram usados como baselines adicionais em histopatologia para medir generalização entre arquiteturas em outros conjuntos de tecido mamário.
+```text
+INBreast/
+`- INbreast/
+   |- AllDICOMs/
+   |- INbreast.csv
+   |- INbreast.xls
+   |- README.txt
+   `- inbreast.pdf
+```
+
+Observação prática:
+
+- o arquivo `SEConformer/inbreast_birads_folds.csv` já referencia diretamente os arquivos `.dcm` dentro de `AllDICOMs`.
+
+### BACH
+
+Baseline adicional de histopatologia para medir generalização entre arquiteturas em imagens microscópicas de tecido mamário.
+
+- `400` imagens de treino `.tif`
+- `100` imagens por classe em `Normal`, `Benign`, `InSitu` e `Invasive`
+- `100` imagens no conjunto de teste em `ICIAR2018_BACH_Challenge_TestDataset/Photos`
+- arquivo `microscopy_ground_truth.csv` disponível no pacote de treino
+
+Estrutura local observada:
+
+```text
+BACH/
+|- ICIAR2018_BACH_Challenge/
+|  `- ICIAR2018_BACH_Challenge/
+|     `- Photos/
+|        |- Benign/
+|        |- InSitu/
+|        |- Invasive/
+|        |- Normal/
+|        `- microscopy_ground_truth.csv
+`- ICIAR2018_BACH_Challenge_TestDataset/
+   `- ICIAR2018_BACH_Challenge_TestDataset/
+      |- Photos/
+      `- WSI/
+```
+
+### BRACS
+
+Baseline adicional em histopatologia com divisão pronta em `train`, `val` e `test`.
+
+- `7` classes: `0_N`, `1_PB`, `2_UDH`, `3_FEA`, `4_ADH`, `5_DCIS` e `6_IC`
+- `3.655` imagens em `train`
+- `311` imagens em `val`
+- `570` imagens em `test`
+
+Estrutura local observada:
+
+```text
+BRACS/
+|- train/
+|- val/
+`- test/
+```
+
+Observação prática:
+
+- os scripts de `BACH` e `BRACS` importam o módulo auxiliar `histology_datasets`, que não está versionado no repositório.
 
 ### Links úteis dos dados
 
